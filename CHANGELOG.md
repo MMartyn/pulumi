@@ -1,5 +1,72 @@
 # Changelog
 
+## 3.67.1 (2023-05-15)
+
+
+### Features
+
+- [programgen/go] Module support as component resources
+  [#12840](https://github.com/pulumi/pulumi/pull/12840)
+
+
+### Bug Fixes
+
+- [engine] Non-targeted resources are now added to internal update plans fixing a bug where the step_executor would error due to missing resources in the plan.
+  [#12939](https://github.com/pulumi/pulumi/pull/12939)
+
+- [programgen] Fix stack overflow panic when pretty printing recursive types
+  [#12866](https://github.com/pulumi/pulumi/pull/12866)
+
+- [sdk/nodejs] Revert recursive package.json lookup.
+  [#12944](https://github.com/pulumi/pulumi/pull/12944)
+
+
+### Miscellaneous
+
+- [sdk/go] testing.Environment now tolerates errors in deleting the test environment.
+  [#12927](https://github.com/pulumi/pulumi/pull/12927)
+
+- [sdk/nodejs] Replaces empty interfaces with type aliases. Empty interfaces are equivalent to their supertype; this change expresses these type definitions using type aliases instead of interface extention to provide better clarity. This change will not affect type-checking.
+  [#12865](https://github.com/pulumi/pulumi/pull/12865)
+
+## 3.67.0 (2023-05-11)
+
+
+### Features
+
+- [sdk/nodejs] Support loading package.json from parent directory. If `package.json` is not found in the Pulumi main directory, Pulumi recursively searches up the directory tree until it is found. If `package.json` provides a `main` field, per the [NPM spec](https://docs.npmjs.com/cli/v6/configuring-npm/package-json#main), that field is relative to the directory containing package.json.
+  [#12759](https://github.com/pulumi/pulumi/pull/12759)
+
+
+### Bug Fixes
+
+- [build] Fixes race condition in building Go sdk.
+  [#12821](https://github.com/pulumi/pulumi/pull/12821)
+
+- [cli] Convert to PCL will recover from panics in program binding.
+  [#12827](https://github.com/pulumi/pulumi/pull/12827)
+
+- [engine] Fix bug with targeting and plans where root stack resource and target-replaces were not being marked targeted.
+  [#12834](https://github.com/pulumi/pulumi/pull/12834)
+
+- [engine] Fix the engine trying to install the pulumi-resource-pulumi plugin which is builtin.
+  [#12858](https://github.com/pulumi/pulumi/pull/12858)
+
+- [programgen] Allow null literal as a default value for config variables
+  [#12817](https://github.com/pulumi/pulumi/pull/12817)
+
+- [programgen] Fix panic on component type traversal
+  [#12828](https://github.com/pulumi/pulumi/pull/12828)
+
+- [sdk/python] Fix hang due to component children cycles
+  [#12855](https://github.com/pulumi/pulumi/pull/12855)
+
+
+### Miscellaneous
+
+- [sdk/nodejs] With Node14 sunset on April 30, the minimum version of Node is now Node 16.
+  [#12648](https://github.com/pulumi/pulumi/pull/12648)
+
 ## 3.66.0 (2023-05-03)
 
 

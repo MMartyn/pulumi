@@ -234,7 +234,6 @@ var PulumiPulumiProgramTests = []ProgramTest{
 	{
 		Directory:   "components",
 		Description: "Components",
-		Skip:        codegen.NewStringSet("go"),
 		SkipCompile: codegen.NewStringSet("go"),
 	},
 	{
@@ -264,6 +263,17 @@ var PulumiPulumiProgramTests = []ProgramTest{
 		// TODO: dotnet and go
 		Skip: allProgLanguages.Except("nodejs").Except("python"),
 		// We are using a synthetic schema defined in range-1.0.0.json so we can't compile all the way
+		SkipCompile: allProgLanguages,
+	},
+	{
+		Directory:   "output-literals",
+		Description: "Tests that we can return various literal values via stack outputs",
+		SkipCompile: codegen.NewStringSet("go"),
+	},
+	{
+		Directory:   "dynamic-entries",
+		Description: "Testing iteration of dynamic entries in TypeScript",
+		Skip:        allProgLanguages.Except("nodejs"),
 		SkipCompile: allProgLanguages,
 	},
 }

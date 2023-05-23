@@ -187,10 +187,6 @@ func newPreviewCmd() *cobra.Command {
 				return result.FromError(fmt.Errorf("validating stack config: %w", configErr))
 			}
 
-			if err != nil {
-				return result.FromError(fmt.Errorf("getting stack configuration: %w", err))
-			}
-
 			targetURNs := []string{}
 			targetURNs = append(targetURNs, targets...)
 
@@ -236,7 +232,7 @@ func newPreviewCmd() *cobra.Command {
 				StackConfiguration: cfg,
 				SecretsManager:     sm,
 				SecretsProvider:    stack.DefaultSecretsProvider,
-				Scopes:             cancellationScopes,
+				Scopes:             backend.CancellationScopes,
 			})
 
 			switch {

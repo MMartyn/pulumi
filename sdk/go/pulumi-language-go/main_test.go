@@ -18,7 +18,6 @@ import (
 	"context"
 	"encoding/json"
 	"flag"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -369,6 +368,48 @@ func TestPluginsAndDependencies_vendored(t *testing.T) {
 	testPluginsAndDependencies(t, progDir)
 }
 
+// Regression test for https://github.com/pulumi/pulumi/issues/12963.
+// Verifies that the language host can find plugins and dependencies
+// when the Pulumi program is in a subdirectory of the project root.
+func TestPluginsAndDependencies_subdir(t *testing.T) {
+	t.Parallel()
+
+	t.Run("moduleMode", func(t *testing.T) {
+		t.Parallel()
+
+		root := t.TempDir()
+		require.NoError(t,
+			fsutil.CopyFile(root, filepath.Join("testdata", "sample"), nil),
+			"copy test data")
+
+		testPluginsAndDependencies(t, filepath.Join(root, "prog-subdir", "infra"))
+	})
+
+	t.Run("vendored", func(t *testing.T) {
+		t.Parallel()
+
+		root := t.TempDir()
+		require.NoError(t,
+			fsutil.CopyFile(root, filepath.Join("testdata", "sample"), nil),
+			"copy test data")
+
+		progDir := filepath.Join(root, "prog-subdir", "infra")
+
+		// Vendor the dependencies and nuke the sources
+		// to ensure that the language host can only use the vendored version.
+		cmd := exec.Command("go", "mod", "vendor")
+		cmd.Dir = progDir
+		cmd.Stdout = iotest.LogWriter(t)
+		cmd.Stderr = iotest.LogWriter(t)
+		require.NoError(t, cmd.Run(), "vendor dependencies")
+		require.NoError(t, os.RemoveAll(filepath.Join(root, "plugin")))
+		require.NoError(t, os.RemoveAll(filepath.Join(root, "dep")))
+		require.NoError(t, os.RemoveAll(filepath.Join(root, "indirect-dep")))
+
+		testPluginsAndDependencies(t, progDir)
+	})
+}
+
 func testPluginsAndDependencies(t *testing.T, progDir string) {
 	host := newLanguageHost("0.0.0.0:0", progDir, "", "", "")
 	ctx := context.Background()
@@ -447,7 +488,7 @@ func TestGeneratePackage(t *testing.T) {
 
 	// This is just a simple test that we wrote the doc file. This will be better covered by matrix tests
 	// soon.
-	contents, err := ioutil.ReadFile(filepath.Join(root, "test/doc.go"))
+	contents, err := os.ReadFile(filepath.Join(root, "test/doc.go"))
 	require.NoError(t, err)
 
 	assert.Contains(t, string(contents), "// A test package")
@@ -499,7 +540,7 @@ output "dummyOutput" {
 
 	// This is just a simple test that we wrote a program. This will be better covered by matrix tests
 	// soon.
-	contents, err := ioutil.ReadFile(filepath.Join(root, "main.go"))
+	contents, err := os.ReadFile(filepath.Join(root, "main.go"))
 	require.NoError(t, err)
 
 	assert.Contains(t, string(contents), "dummyOutput")

@@ -17,13 +17,12 @@ package providers
 import (
 	"errors"
 	"fmt"
-	"io"
 	"sync"
-	"time"
 
 	"github.com/blang/semver"
 	uuid "github.com/gofrs/uuid"
 
+	pkgWorkspace "github.com/pulumi/pulumi/pkg/v3/workspace"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/diag"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource/plugin"
@@ -102,40 +101,6 @@ type Registry struct {
 
 var _ plugin.Provider = (*Registry)(nil)
 
-// InstallProviderError is returned by loadProvider if we couldn't find or install the provider
-type InstallProviderError struct {
-	// The name of the provider
-	Name string
-	// The requested version of the plugin, if any.
-	Version *semver.Version
-	// The pluginDownloadURL, if any.
-	PluginDownloadURL string
-	// The underlying error that occurred during the download or install.
-	Err error
-}
-
-func (err *InstallProviderError) Error() string {
-	var server string
-	if err.PluginDownloadURL != "" {
-		server = fmt.Sprintf(" --server %s", err.PluginDownloadURL)
-	}
-
-	if err.Version != nil {
-		return fmt.Sprintf("Could not automatically download and install %[1]s plugin 'pulumi-%[1]s-%[2]s'"+
-			" at version v%[3]s"+
-			", install the plugin using `pulumi plugin install %[1]s %[2]s v%[3]s%[4]s`: %[5]v",
-			workspace.ResourcePlugin, err.Name, err.Version, server, err.Err)
-	}
-
-	return fmt.Sprintf("Could not automatically download and install %[1]s plugin 'pulumi-%[1]s-%[2]s'"+
-		", install the plugin using `pulumi plugin install %[1]s %[2]s%[3]s`: %[4]v",
-		workspace.ResourcePlugin, err.Name, server, err.Err)
-}
-
-func (err *InstallProviderError) Unwrap() error {
-	return err.Err
-}
-
 func loadProvider(pkg tokens.Package, version *semver.Version, downloadURL string, checksums map[string][]byte,
 	host plugin.Host, builtins plugin.Provider,
 ) (plugin.Provider, error) {
@@ -168,111 +133,28 @@ func loadProvider(pkg tokens.Package, version *semver.Version, downloadURL strin
 		Checksums:         checksums,
 	}
 
-	if pluginSpec.Version == nil {
-		pluginSpec.Version, err = pluginSpec.GetLatestVersion()
-		if err != nil {
-			return nil, fmt.Errorf("could not find latest version for provider %s: %w", pluginSpec.Name, err)
-		}
+	log := func(sev diag.Severity, msg string) {
+		host.Log(sev, "", msg, 0)
 	}
 
-	wrapper := func(stream io.ReadCloser, size int64) io.ReadCloser {
-		host.Log(diag.Info, "", fmt.Sprintf("Downloading provider: %s", pluginSpec.Name), 0)
-		return stream
-	}
-
-	retry := func(err error, attempt int, limit int, delay time.Duration) {
-		host.Log(diag.Warning, "", fmt.Sprintf("error downloading provider: %s\n"+
-			"Will retry in %v [%d/%d]", err, delay, attempt, limit), 0)
-	}
-
-	logging.V(1).Infof("Automatically downloading provider %s", pluginSpec.Name)
-	downloadedFile, err := workspace.DownloadToFile(pluginSpec, wrapper, retry)
+	err = pkgWorkspace.InstallPlugin(pluginSpec, log)
 	if err != nil {
-		return nil, &InstallProviderError{
-			Name:              string(pkg),
-			Version:           version,
-			PluginDownloadURL: downloadURL,
-			Err:               fmt.Errorf("error downloading provider %s to file: %w", pluginSpec.Name, err),
-		}
-	}
-
-	logging.V(1).Infof("Automatically installing provider %s", pluginSpec.Name)
-	err = pluginSpec.Install(downloadedFile, false)
-	if err != nil {
-		return nil, &InstallProviderError{
-			Name:              string(pkg),
-			Version:           version,
-			PluginDownloadURL: downloadURL,
-			Err:               fmt.Errorf("error installing provider %s: %w", pluginSpec.Name, err),
-		}
+		return nil, err
 	}
 
 	// Try to load the provider again, this time it should succeed.
 	return host.Provider(pkg, version)
 }
 
-// NewRegistry creates a new provider registry using the given host and old resources. Each provider present in the old
-// resources will be loaded, configured, and added to the returned registry under its reference. If any provider is not
-// loadable/configurable or has an invalid ID, this function returns an error.
-func NewRegistry(host plugin.Host, prev []*resource.State, isPreview bool,
-	builtins plugin.Provider,
-) (*Registry, error) {
-	r := &Registry{
+// NewRegistry creates a new provider registry using the given host.
+func NewRegistry(host plugin.Host, isPreview bool, builtins plugin.Provider) *Registry {
+	return &Registry{
 		host:      host,
 		isPreview: isPreview,
 		providers: make(map[Reference]plugin.Provider),
 		builtins:  builtins,
 		aliases:   make(map[resource.URN]resource.URN),
 	}
-
-	for _, res := range prev {
-		urn := res.URN
-		if !IsProviderType(urn.Type()) {
-			logging.V(7).Infof("provider(%v): %v", urn, res.Provider)
-			continue
-		}
-
-		// Ensure that this provider has a known ID.
-		if res.ID == "" || res.ID == UnknownID {
-			return nil, fmt.Errorf("provider '%v' has an unknown ID", urn)
-		}
-
-		// Ensure that we have no duplicates.
-		ref := mustNewReference(urn, res.ID)
-		if _, ok := r.providers[ref]; ok {
-			return nil, fmt.Errorf("duplicate provider found in old state: '%v'", ref)
-		}
-
-		providerPkg := GetProviderPackage(urn.Type())
-
-		// Parse the provider version, then load, configure, and register the provider.
-		version, err := GetProviderVersion(res.Inputs)
-		if err != nil {
-			return nil, fmt.Errorf("could not parse version for %v provider '%v': %v", providerPkg, urn, err)
-		}
-		downloadURL, err := GetProviderDownloadURL(res.Inputs)
-		if err != nil {
-			return nil, fmt.Errorf("could not parse download URL for %v provider '%v': %v", providerPkg, urn, err)
-		}
-		// TODO: We should thread checksums through here.
-		provider, err := loadProvider(providerPkg, version, downloadURL, nil, host, builtins)
-		if err != nil {
-			return nil, fmt.Errorf("could not load plugin for %v provider '%v': %v", providerPkg, urn, err)
-		}
-		if provider == nil {
-			return nil, fmt.Errorf("could not find plugin for %v provider '%v' at version %v", providerPkg, urn, version)
-		}
-		if err := provider.Configure(res.Inputs); err != nil {
-			closeErr := host.CloseProvider(provider)
-			contract.IgnoreError(closeErr)
-			return nil, fmt.Errorf("could not configure provider '%v': %v", urn, err)
-		}
-
-		logging.V(7).Infof("loaded provider %v", ref)
-		r.providers[ref] = provider
-	}
-
-	return r, nil
 }
 
 // GetProvider returns the provider plugin that is currently registered under the given reference, if any.
@@ -431,9 +313,9 @@ func (r *Registry) Diff(urn resource.URN, id resource.ID, olds, news resource.Pr
 		// If the provider was not found in the registry under its URN and the Unknown ID, then it must have not have
 		// been subject to a call to `Check`. This can happen when we are diffing a provider's inputs as part of
 		// evaluating the fanout of a delete-before-replace operation. In this case, we can just use the old provider
-		// (which must have been loaded when the registry was created), and we will not unload it.
+		// (which we should have loaded during diff search), and we will not unload it.
 		provider, ok = r.GetProvider(mustNewReference(urn, id))
-		contract.Assertf(ok, "Provider must have been registered by NewRegistry for DBR Diff (%v::%v)", urn, id)
+		contract.Assertf(ok, "Provider must have been registered at some point for DBR Diff (%v::%v)", urn, id)
 
 		diff, err := provider.DiffConfig(urn, olds, news, allowUnknowns, ignoreChanges)
 		if err != nil {
@@ -466,20 +348,58 @@ func (r *Registry) Diff(urn resource.URN, id resource.ID, olds, news resource.Pr
 	return diff, nil
 }
 
-// Same executes as part of the "Same" step for a provider that has not changed. It exists solely to allow the registry
-// to point aliases for a provider to the proper object.
-func (r *Registry) Same(ref Reference) {
-	r.m.RLock()
-	defer r.m.RUnlock()
+// Same executes as part of the "Same" step for a provider that has not changed. It configures the provider
+// instance with the given state and fixes up aliases.
+func (r *Registry) Same(res *resource.State) error {
+	urn := res.URN
+	if !IsProviderType(urn.Type()) {
+		return fmt.Errorf("urn %v is not a provider type", urn)
+	}
 
+	// Ensure that this provider has a known ID.
+	if res.ID == "" || res.ID == UnknownID {
+		return fmt.Errorf("provider '%v' has an unknown ID", urn)
+	}
+
+	ref := mustNewReference(urn, res.ID)
 	logging.V(7).Infof("Same(%v)", ref)
 
-	// If this provider is aliased to a different old URN, make sure that it is present under both the old reference and
-	// the new reference.
-	if alias, ok := r.aliases[ref.URN()]; ok {
-		aliasRef := mustNewReference(alias, ref.ID())
-		r.providers[ref] = r.providers[aliasRef]
+	// If this provider is already configured, then we're done.
+	_, ok := r.GetProvider(ref)
+	if ok {
+		return nil
 	}
+
+	providerPkg := GetProviderPackage(urn.Type())
+
+	// Parse the provider version, then load, configure, and register the provider.
+	version, err := GetProviderVersion(res.Inputs)
+	if err != nil {
+		return fmt.Errorf("parse version for %v provider '%v': %v", providerPkg, urn, err)
+	}
+	downloadURL, err := GetProviderDownloadURL(res.Inputs)
+	if err != nil {
+		return fmt.Errorf("parse download URL for %v provider '%v': %v", providerPkg, urn, err)
+	}
+	// TODO: We should thread checksums through here.
+	provider, err := loadProvider(providerPkg, version, downloadURL, nil, r.host, r.builtins)
+	if err != nil {
+		return fmt.Errorf("load plugin for %v provider '%v': %v", providerPkg, urn, err)
+	}
+	if provider == nil {
+		return fmt.Errorf("find plugin for %v provider '%v' at version %v", providerPkg, urn, version)
+	}
+	if err := provider.Configure(res.Inputs); err != nil {
+		closeErr := r.host.CloseProvider(provider)
+		contract.IgnoreError(closeErr)
+		return fmt.Errorf("configure provider '%v': %v", urn, err)
+	}
+
+	logging.V(7).Infof("loaded provider %v", ref)
+
+	r.setProvider(ref, provider)
+
+	return nil
 }
 
 // Create coonfigures the provider with the given URN using the indicated configuration, assigns it an ID, and
@@ -538,8 +458,8 @@ func (r *Registry) Update(urn resource.URN, id resource.ID, olds, news resource.
 	return news, resource.StatusOK, nil
 }
 
-// Delete unregisters and unloads the provider with the given URN and ID. The provider must have been loaded when the
-// registry was created (i.e. it must have been present in the state handed to NewRegistry).
+// Delete unregisters and unloads the provider with the given URN and ID. If the provider was never loaded
+// this is a no-op.
 func (r *Registry) Delete(urn resource.URN, id resource.ID, props resource.PropertyMap,
 	timeout float64,
 ) (resource.Status, error) {
@@ -547,7 +467,9 @@ func (r *Registry) Delete(urn resource.URN, id resource.ID, props resource.Prope
 
 	ref := mustNewReference(urn, id)
 	provider, has := r.deleteProvider(ref)
-	contract.Assertf(has, "could not find provider to delete (%v)", ref)
+	if !has {
+		return resource.StatusOK, nil
+	}
 
 	closeErr := r.host.CloseProvider(provider)
 	contract.IgnoreError(closeErr)

@@ -1,4 +1,4 @@
-// Copyright 2016-2018, Pulumi Corporation.
+// Copyright 2016-2023, Pulumi Corporation.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -326,12 +326,10 @@ func newProviderState(pkg, name, id string, delete bool, inputs resource.Propert
 func TestNewRegistryNoOldState(t *testing.T) {
 	t.Parallel()
 
-	r, err := NewRegistry(&testPluginHost{}, nil, false, nil)
-	assert.NoError(t, err)
+	r := NewRegistry(&testPluginHost{}, false, nil)
 	assert.NotNil(t, r)
 
-	r, err = NewRegistry(&testPluginHost{}, nil, true, nil)
-	assert.NoError(t, err)
+	r = NewRegistry(&testPluginHost{}, true, nil)
 	assert.NotNil(t, r)
 }
 
@@ -361,17 +359,23 @@ func TestNewRegistryOldState(t *testing.T) {
 	}
 	host := newPluginHost(t, loaders)
 
-	r, err := NewRegistry(host, olds, false, nil)
-	assert.NoError(t, err)
+	r := NewRegistry(host, false, nil)
 	assert.NotNil(t, r)
-
-	assert.Equal(t, len(olds), len(r.providers))
 
 	for _, old := range olds {
 		ref, err := NewReference(old.URN, old.ID)
 		assert.NoError(t, err)
 
 		p, ok := r.GetProvider(ref)
+		assert.False(t, ok)
+		assert.Nil(t, p)
+
+		// "Same" the provider to add it to registry
+		err = r.Same(old)
+		assert.NoError(t, err)
+
+		// Now we should be able to get it
+		p, ok = r.GetProvider(ref)
 		assert.True(t, ok)
 		assert.NotNil(t, p)
 
@@ -389,102 +393,6 @@ func TestNewRegistryOldState(t *testing.T) {
 	}
 }
 
-func TestNewRegistryOldStateNoProviders(t *testing.T) {
-	t.Parallel()
-
-	olds := []*resource.State{
-		newProviderState("pkgA", "a", "id1", false, nil),
-	}
-	host := newPluginHost(t, []*providerLoader{})
-
-	r, err := NewRegistry(host, olds, false, nil)
-	assert.Error(t, err)
-	assert.Nil(t, r)
-}
-
-func TestNewRegistryOldStateWrongPackage(t *testing.T) {
-	t.Parallel()
-
-	olds := []*resource.State{
-		newProviderState("pkgA", "a", "id1", false, nil),
-	}
-	loaders := []*providerLoader{
-		newSimpleLoader(t, "pkgB", "", nil),
-	}
-	host := newPluginHost(t, loaders)
-
-	r, err := NewRegistry(host, olds, false, nil)
-	assert.Error(t, err)
-	assert.Nil(t, r)
-}
-
-func TestNewRegistryOldStateWrongVersion(t *testing.T) {
-	t.Parallel()
-
-	olds := []*resource.State{
-		newProviderState("pkgA", "a", "id1", false, resource.PropertyMap{
-			"version": resource.NewStringProperty("1.0.0"),
-		}),
-	}
-	loaders := []*providerLoader{
-		newSimpleLoader(t, "pkgA", "0.5.0", nil),
-	}
-	host := newPluginHost(t, loaders)
-
-	r, err := NewRegistry(host, olds, false, nil)
-	assert.Error(t, err)
-	assert.Nil(t, r)
-}
-
-func TestNewRegistryOldStateNoID(t *testing.T) {
-	t.Parallel()
-
-	olds := []*resource.State{
-		newProviderState("pkgA", "a", "", false, nil),
-	}
-	loaders := []*providerLoader{
-		newSimpleLoader(t, "pkgA", "", nil),
-	}
-	host := newPluginHost(t, loaders)
-
-	r, err := NewRegistry(host, olds, false, nil)
-	assert.Error(t, err)
-	assert.Nil(t, r)
-}
-
-func TestNewRegistryOldStateUnknownID(t *testing.T) {
-	t.Parallel()
-
-	olds := []*resource.State{
-		newProviderState("pkgA", "a", UnknownID, false, nil),
-	}
-	loaders := []*providerLoader{
-		newSimpleLoader(t, "pkgA", "", nil),
-	}
-	host := newPluginHost(t, loaders)
-
-	r, err := NewRegistry(host, olds, false, nil)
-	assert.Error(t, err)
-	assert.Nil(t, r)
-}
-
-func TestNewRegistryOldStateDuplicates(t *testing.T) {
-	t.Parallel()
-
-	olds := []*resource.State{
-		newProviderState("pkgA", "a", "id1", false, nil),
-		newProviderState("pkgA", "a", "id1", false, nil),
-	}
-	loaders := []*providerLoader{
-		newSimpleLoader(t, "pkgA", "", nil),
-	}
-	host := newPluginHost(t, loaders)
-
-	r, err := NewRegistry(host, olds, false, nil)
-	assert.Error(t, err)
-	assert.Nil(t, r)
-}
-
 func TestCRUD(t *testing.T) {
 	t.Parallel()
 
@@ -500,17 +408,23 @@ func TestCRUD(t *testing.T) {
 	}
 	host := newPluginHost(t, loaders)
 
-	r, err := NewRegistry(host, olds, false, nil)
-	assert.NoError(t, err)
+	r := NewRegistry(host, false, nil)
 	assert.NotNil(t, r)
-
-	assert.Equal(t, len(olds), len(r.providers))
 
 	for _, old := range olds {
 		ref, err := NewReference(old.URN, old.ID)
 		assert.NoError(t, err)
 
 		p, ok := r.GetProvider(ref)
+		assert.False(t, ok)
+		assert.Nil(t, p)
+
+		// "Same" the provider to add it to registry
+		err = r.Same(old)
+		assert.NoError(t, err)
+
+		// Now we should be able to get it
+		p, ok = r.GetProvider(ref)
 		assert.True(t, ok)
 		assert.NotNil(t, p)
 
@@ -648,17 +562,23 @@ func TestCRUDPreview(t *testing.T) {
 	}
 	host := newPluginHost(t, loaders)
 
-	r, err := NewRegistry(host, olds, true, nil)
-	assert.NoError(t, err)
+	r := NewRegistry(host, true, nil)
 	assert.NotNil(t, r)
-
-	assert.Equal(t, len(olds), len(r.providers))
 
 	for _, old := range olds {
 		ref, err := NewReference(old.URN, old.ID)
 		assert.NoError(t, err)
 
 		p, ok := r.GetProvider(ref)
+		assert.False(t, ok)
+		assert.Nil(t, p)
+
+		// "Same" the provider to add it to registry
+		err = r.Same(old)
+		assert.NoError(t, err)
+
+		// Now we should be able to get it
+		p, ok = r.GetProvider(ref)
 		assert.True(t, ok)
 		assert.NotNil(t, p)
 
@@ -755,8 +675,7 @@ func TestCRUDNoProviders(t *testing.T) {
 
 	host := newPluginHost(t, []*providerLoader{})
 
-	r, err := NewRegistry(host, []*resource.State{}, false, nil)
-	assert.NoError(t, err)
+	r := NewRegistry(host, false, nil)
 	assert.NotNil(t, r)
 
 	typ := MakeProviderType("pkgA")
@@ -778,8 +697,7 @@ func TestCRUDWrongPackage(t *testing.T) {
 	}
 	host := newPluginHost(t, loaders)
 
-	r, err := NewRegistry(host, []*resource.State{}, false, nil)
-	assert.NoError(t, err)
+	r := NewRegistry(host, false, nil)
 	assert.NotNil(t, r)
 
 	typ := MakeProviderType("pkgA")
@@ -801,8 +719,7 @@ func TestCRUDWrongVersion(t *testing.T) {
 	}
 	host := newPluginHost(t, loaders)
 
-	r, err := NewRegistry(host, []*resource.State{}, false, nil)
-	assert.NoError(t, err)
+	r := NewRegistry(host, false, nil)
 	assert.NotNil(t, r)
 
 	typ := MakeProviderType("pkgA")
@@ -824,8 +741,7 @@ func TestCRUDBadVersionNotString(t *testing.T) {
 	}
 	host := newPluginHost(t, loaders)
 
-	r, err := NewRegistry(host, []*resource.State{}, false, nil)
-	assert.NoError(t, err)
+	r := NewRegistry(host, false, nil)
 	assert.NotNil(t, r)
 
 	typ := MakeProviderType("pkgA")
@@ -848,8 +764,7 @@ func TestCRUDBadVersion(t *testing.T) {
 	}
 	host := newPluginHost(t, loaders)
 
-	r, err := NewRegistry(host, []*resource.State{}, false, nil)
-	assert.NoError(t, err)
+	r := NewRegistry(host, false, nil)
 	assert.NotNil(t, r)
 
 	typ := MakeProviderType("pkgA")
@@ -862,69 +777,6 @@ func TestCRUDBadVersion(t *testing.T) {
 	assert.Len(t, failures, 1)
 	assert.Equal(t, "version", string(failures[0].Property))
 	assert.Nil(t, inputs)
-}
-
-func TestInstallProviderErrorText(t *testing.T) {
-	t.Parallel()
-
-	v1 := semver.MustParse("0.1.0")
-	err := errors.New("some error")
-	tests := []struct {
-		Name          string
-		Err           InstallProviderError
-		ExpectedError string
-	}{
-		{
-			Name: "Just name",
-			Err: InstallProviderError{
-				Err:  err,
-				Name: "myplugin",
-			},
-			ExpectedError: "Could not automatically download and install resource plugin 'pulumi-resource-myplugin'," +
-				" install the plugin using `pulumi plugin install resource myplugin`: some error",
-		},
-		{
-			Name: "Name and version",
-			Err: InstallProviderError{
-				Err:     err,
-				Name:    "myplugin",
-				Version: &v1,
-			},
-			ExpectedError: "Could not automatically download and install resource plugin 'pulumi-resource-myplugin'" +
-				" at version v0.1.0, install the plugin using `pulumi plugin install resource myplugin v0.1.0`: some error",
-		},
-		{
-			Name: "Name and version and URL",
-			Err: InstallProviderError{
-				Err:               err,
-				Name:              "myplugin",
-				Version:           &v1,
-				PluginDownloadURL: "github://owner/repo",
-			},
-			ExpectedError: "Could not automatically download and install resource plugin 'pulumi-resource-myplugin'" +
-				" at version v0.1.0, install the plugin using `pulumi plugin install resource myplugin v0.1.0" +
-				" --server github://owner/repo`: some error",
-		},
-		{
-			Name: "Name and URL",
-			Err: InstallProviderError{
-				Err:               err,
-				Name:              "myplugin",
-				PluginDownloadURL: "github://owner/repo",
-			},
-			ExpectedError: "Could not automatically download and install resource plugin 'pulumi-resource-myplugin'," +
-				" install the plugin using `pulumi plugin install resource myplugin" +
-				" --server github://owner/repo`: some error",
-		},
-	}
-
-	for _, tt := range tests {
-		tt := tt
-		t.Run(tt.Name, func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, tt.ExpectedError, tt.Err.Error())
-		})
-	}
 }
 
 func TestLoadProvider_missingError(t *testing.T) {
