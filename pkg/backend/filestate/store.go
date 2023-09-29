@@ -24,6 +24,7 @@ import (
 	"strings"
 
 	"github.com/pulumi/pulumi/sdk/v3/go/common/encoding"
+	"github.com/pulumi/pulumi/sdk/v3/go/common/slice"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/tokens"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/util/contract"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/util/fsutil"
@@ -179,14 +180,10 @@ func (p *projectReferenceStore) ParseReference(stackRef string) (*localBackendRe
 		project = currentProject.Name.String()
 	}
 
-	if len(project) > 100 {
-		return nil, errors.New("project names are limited to 100 characters")
-	}
-
-	if project != "" && !tokens.IsName(project) {
-		return nil, fmt.Errorf(
-			"project names may only contain alphanumerics, hyphens, underscores, and periods: %s",
-			project)
+	if project != "" {
+		if err := tokens.ValidateProjectName(project); err != nil {
+			return nil, err
+		}
 	}
 
 	if !tokens.IsName(name) || len(name) > 100 {
@@ -213,7 +210,7 @@ func (p *projectReferenceStore) ListProjects(ctx context.Context) ([]tokens.Name
 		return nil, fmt.Errorf("error listing stacks: %w", err)
 	}
 
-	projects := make([]tokens.Name, 0, len(files))
+	projects := slice.Prealloc[tokens.Name](len(files))
 	for _, file := range files {
 		if !file.IsDir {
 			continue // ignore files
@@ -372,7 +369,7 @@ func (p *legacyReferenceStore) ListReferences(ctx context.Context) ([]*localBack
 	if err != nil {
 		return nil, fmt.Errorf("error listing stacks: %w", err)
 	}
-	stacks := make([]*localBackendReference, 0, len(files))
+	stacks := slice.Prealloc[*localBackendReference](len(files))
 
 	for _, file := range files {
 		if file.IsDir {

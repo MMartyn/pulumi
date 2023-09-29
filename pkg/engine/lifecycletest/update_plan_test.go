@@ -23,10 +23,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/pulumi/pulumi/pkg/v3/display"
 	. "github.com/pulumi/pulumi/pkg/v3/engine"
 	"github.com/pulumi/pulumi/pkg/v3/resource/deploy"
 	"github.com/pulumi/pulumi/pkg/v3/resource/deploy/deploytest"
-	"github.com/pulumi/pulumi/sdk/v3/go/common/display"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource/plugin"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/workspace"
@@ -43,27 +43,25 @@ func TestPlannedUpdate(t *testing.T) {
 				) (resource.ID, resource.PropertyMap, resource.Status, error) {
 					return "created-id", news, resource.StatusOK, nil
 				},
-				UpdateF: func(urn resource.URN, id resource.ID, olds, news resource.PropertyMap, timeout float64,
-					ignoreChanges []string, preview bool,
-				) (resource.PropertyMap, resource.Status, error) {
-					return news, resource.StatusOK, nil
-				},
 			}, nil
 		}),
 	}
 
 	var ins resource.PropertyMap
-	program := deploytest.NewLanguageRuntime(func(_ plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
+	programF := deploytest.NewLanguageRuntimeF(func(_ plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
 		_, _, _, err := monitor.RegisterResource("pkgA:m:typA", "resA", true, deploytest.ResourceOptions{
 			Inputs: ins,
 		})
 		assert.NoError(t, err)
 		return nil
 	})
-	host := deploytest.NewPluginHost(nil, nil, program, loaders...)
+	hostF := deploytest.NewPluginHostF(nil, nil, programF, loaders...)
 
 	p := &TestPlan{
-		Options: UpdateOptions{Host: host, GeneratePlan: true, Experimental: true},
+		Options: TestUpdateOptions{
+			HostF:         hostF,
+			UpdateOptions: UpdateOptions{GeneratePlan: true, Experimental: true},
+		},
 	}
 
 	project := p.GetProject()
@@ -164,7 +162,7 @@ func TestUnplannedCreate(t *testing.T) {
 		"foo": "bar",
 	})
 	createResource := false
-	program := deploytest.NewLanguageRuntime(func(_ plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
+	programF := deploytest.NewLanguageRuntimeF(func(_ plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
 		if createResource {
 			_, _, _, err := monitor.RegisterResource("pkgA:m:typA", "resA", true, deploytest.ResourceOptions{
 				Inputs: ins,
@@ -173,10 +171,13 @@ func TestUnplannedCreate(t *testing.T) {
 		}
 		return nil
 	})
-	host := deploytest.NewPluginHost(nil, nil, program, loaders...)
+	hostF := deploytest.NewPluginHostF(nil, nil, programF, loaders...)
 
 	p := &TestPlan{
-		Options: UpdateOptions{Host: host, GeneratePlan: true, Experimental: true},
+		Options: TestUpdateOptions{
+			HostF:         hostF,
+			UpdateOptions: UpdateOptions{GeneratePlan: true, Experimental: true},
+		},
 	}
 
 	project := p.GetProject()
@@ -227,7 +228,7 @@ func TestUnplannedDelete(t *testing.T) {
 		"foo": "bar",
 	})
 	createAllResources := true
-	program := deploytest.NewLanguageRuntime(func(_ plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
+	programF := deploytest.NewLanguageRuntimeF(func(_ plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
 		_, _, _, err := monitor.RegisterResource("pkgA:m:typA", "resA", true, deploytest.ResourceOptions{
 			Inputs: ins,
 		})
@@ -242,10 +243,13 @@ func TestUnplannedDelete(t *testing.T) {
 
 		return nil
 	})
-	host := deploytest.NewPluginHost(nil, nil, program, loaders...)
+	hostF := deploytest.NewPluginHostF(nil, nil, programF, loaders...)
 
 	p := &TestPlan{
-		Options: UpdateOptions{Host: host, GeneratePlan: true, Experimental: true},
+		Options: TestUpdateOptions{
+			HostF:         hostF,
+			UpdateOptions: UpdateOptions{GeneratePlan: true, Experimental: true},
+		},
 	}
 
 	project := p.GetProject()
@@ -301,7 +305,7 @@ func TestExpectedDelete(t *testing.T) {
 		"foo": "bar",
 	})
 	createAllResources := true
-	program := deploytest.NewLanguageRuntime(func(_ plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
+	programF := deploytest.NewLanguageRuntimeF(func(_ plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
 		_, _, _, err := monitor.RegisterResource("pkgA:m:typA", "resA", true, deploytest.ResourceOptions{
 			Inputs: ins,
 		})
@@ -316,10 +320,13 @@ func TestExpectedDelete(t *testing.T) {
 
 		return nil
 	})
-	host := deploytest.NewPluginHost(nil, nil, program, loaders...)
+	hostF := deploytest.NewPluginHostF(nil, nil, programF, loaders...)
 
 	p := &TestPlan{
-		Options: UpdateOptions{Host: host, GeneratePlan: true, Experimental: true},
+		Options: TestUpdateOptions{
+			HostF:         hostF,
+			UpdateOptions: UpdateOptions{GeneratePlan: true, Experimental: true},
+		},
 	}
 
 	project := p.GetProject()
@@ -371,7 +378,7 @@ func TestExpectedCreate(t *testing.T) {
 		"foo": "bar",
 	})
 	createAllResources := false
-	program := deploytest.NewLanguageRuntime(func(_ plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
+	programF := deploytest.NewLanguageRuntimeF(func(_ plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
 		_, _, _, err := monitor.RegisterResource("pkgA:m:typA", "resA", true, deploytest.ResourceOptions{
 			Inputs: ins,
 		})
@@ -386,10 +393,13 @@ func TestExpectedCreate(t *testing.T) {
 
 		return nil
 	})
-	host := deploytest.NewPluginHost(nil, nil, program, loaders...)
+	hostF := deploytest.NewPluginHostF(nil, nil, programF, loaders...)
 
 	p := &TestPlan{
-		Options: UpdateOptions{Host: host, GeneratePlan: true, Experimental: true},
+		Options: TestUpdateOptions{
+			HostF:         hostF,
+			UpdateOptions: UpdateOptions{GeneratePlan: true, Experimental: true},
+		},
 	}
 
 	project := p.GetProject()
@@ -441,7 +451,7 @@ func TestPropertySetChange(t *testing.T) {
 		"foo":  "bar",
 		"frob": "baz",
 	})
-	program := deploytest.NewLanguageRuntime(func(_ plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
+	programF := deploytest.NewLanguageRuntimeF(func(_ plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
 		_, _, _, err := monitor.RegisterResource("pkgA:m:typA", "resA", true, deploytest.ResourceOptions{
 			Inputs: ins,
 		})
@@ -449,10 +459,13 @@ func TestPropertySetChange(t *testing.T) {
 
 		return nil
 	})
-	host := deploytest.NewPluginHost(nil, nil, program, loaders...)
+	hostF := deploytest.NewPluginHostF(nil, nil, programF, loaders...)
 
 	p := &TestPlan{
-		Options: UpdateOptions{Host: host, GeneratePlan: true, Experimental: true},
+		Options: TestUpdateOptions{
+			HostF:         hostF,
+			UpdateOptions: UpdateOptions{GeneratePlan: true, Experimental: true},
+		},
 	}
 
 	project := p.GetProject()
@@ -493,7 +506,7 @@ func TestExpectedUnneededCreate(t *testing.T) {
 	ins := resource.NewPropertyMapFromMap(map[string]interface{}{
 		"foo": "bar",
 	})
-	program := deploytest.NewLanguageRuntime(func(_ plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
+	programF := deploytest.NewLanguageRuntimeF(func(_ plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
 		_, _, _, err := monitor.RegisterResource("pkgA:m:typA", "resA", true, deploytest.ResourceOptions{
 			Inputs: ins,
 		})
@@ -501,10 +514,13 @@ func TestExpectedUnneededCreate(t *testing.T) {
 
 		return nil
 	})
-	host := deploytest.NewPluginHost(nil, nil, program, loaders...)
+	hostF := deploytest.NewPluginHostF(nil, nil, programF, loaders...)
 
 	p := &TestPlan{
-		Options: UpdateOptions{Host: host, GeneratePlan: true, Experimental: true},
+		Options: TestUpdateOptions{
+			HostF:         hostF,
+			UpdateOptions: UpdateOptions{GeneratePlan: true, Experimental: true},
+		},
 	}
 
 	project := p.GetProject()
@@ -558,7 +574,7 @@ func TestExpectedUnneededDelete(t *testing.T) {
 		"foo": "bar",
 	})
 	createResource := true
-	program := deploytest.NewLanguageRuntime(func(_ plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
+	programF := deploytest.NewLanguageRuntimeF(func(_ plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
 		if createResource {
 			_, _, _, err := monitor.RegisterResource("pkgA:m:typA", "resA", true, deploytest.ResourceOptions{
 				Inputs: ins,
@@ -568,10 +584,13 @@ func TestExpectedUnneededDelete(t *testing.T) {
 
 		return nil
 	})
-	host := deploytest.NewPluginHost(nil, nil, program, loaders...)
+	hostF := deploytest.NewPluginHostF(nil, nil, programF, loaders...)
 
 	p := &TestPlan{
-		Options: UpdateOptions{Host: host, GeneratePlan: true, Experimental: true},
+		Options: TestUpdateOptions{
+			HostF:         hostF,
+			UpdateOptions: UpdateOptions{GeneratePlan: true, Experimental: true},
+		},
 	}
 
 	project := p.GetProject()
@@ -617,11 +636,6 @@ func TestResoucesWithSames(t *testing.T) {
 				) (resource.ID, resource.PropertyMap, resource.Status, error) {
 					return "created-id", news, resource.StatusOK, nil
 				},
-				UpdateF: func(urn resource.URN, id resource.ID, olds, news resource.PropertyMap, timeout float64,
-					ignoreChanges []string, preview bool,
-				) (resource.PropertyMap, resource.Status, error) {
-					return news, resource.StatusOK, nil
-				},
 			}, nil
 		}),
 	}
@@ -629,7 +643,7 @@ func TestResoucesWithSames(t *testing.T) {
 	var ins resource.PropertyMap
 	createA := false
 	createB := false
-	program := deploytest.NewLanguageRuntime(func(_ plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
+	programF := deploytest.NewLanguageRuntimeF(func(_ plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
 		if createA {
 			_, _, _, err := monitor.RegisterResource("pkgA:m:typA", "resA", true, deploytest.ResourceOptions{
 				Inputs: ins,
@@ -647,10 +661,13 @@ func TestResoucesWithSames(t *testing.T) {
 		}
 		return nil
 	})
-	host := deploytest.NewPluginHost(nil, nil, program, loaders...)
+	hostF := deploytest.NewPluginHostF(nil, nil, programF, loaders...)
 
 	p := &TestPlan{
-		Options: UpdateOptions{Host: host, GeneratePlan: true, Experimental: true},
+		Options: TestUpdateOptions{
+			HostF:         hostF,
+			UpdateOptions: UpdateOptions{GeneratePlan: true, Experimental: true},
+		},
 	}
 
 	project := p.GetProject()
@@ -723,27 +740,25 @@ func TestPlannedPreviews(t *testing.T) {
 				) (resource.ID, resource.PropertyMap, resource.Status, error) {
 					return "created-id", news, resource.StatusOK, nil
 				},
-				UpdateF: func(urn resource.URN, id resource.ID, olds, news resource.PropertyMap, timeout float64,
-					ignoreChanges []string, preview bool,
-				) (resource.PropertyMap, resource.Status, error) {
-					return news, resource.StatusOK, nil
-				},
 			}, nil
 		}),
 	}
 
 	var ins resource.PropertyMap
-	program := deploytest.NewLanguageRuntime(func(_ plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
+	programF := deploytest.NewLanguageRuntimeF(func(_ plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
 		_, _, _, err := monitor.RegisterResource("pkgA:m:typA", "resA", true, deploytest.ResourceOptions{
 			Inputs: ins,
 		})
 		assert.NoError(t, err)
 		return nil
 	})
-	host := deploytest.NewPluginHost(nil, nil, program, loaders...)
+	hostF := deploytest.NewPluginHostF(nil, nil, programF, loaders...)
 
 	p := &TestPlan{
-		Options: UpdateOptions{Host: host, GeneratePlan: true, Experimental: true},
+		Options: TestUpdateOptions{
+			HostF:         hostF,
+			UpdateOptions: UpdateOptions{GeneratePlan: true, Experimental: true},
+		},
 	}
 
 	project := p.GetProject()
@@ -810,27 +825,25 @@ func TestPlannedUpdateChangedStack(t *testing.T) {
 				) (resource.ID, resource.PropertyMap, resource.Status, error) {
 					return "created-id", news, resource.StatusOK, nil
 				},
-				UpdateF: func(urn resource.URN, id resource.ID, olds, news resource.PropertyMap, timeout float64,
-					ignoreChanges []string, preview bool,
-				) (resource.PropertyMap, resource.Status, error) {
-					return news, resource.StatusOK, nil
-				},
 			}, nil
 		}),
 	}
 
 	var ins resource.PropertyMap
-	program := deploytest.NewLanguageRuntime(func(_ plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
+	programF := deploytest.NewLanguageRuntimeF(func(_ plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
 		_, _, _, err := monitor.RegisterResource("pkgA:m:typA", "resA", true, deploytest.ResourceOptions{
 			Inputs: ins,
 		})
 		assert.NoError(t, err)
 		return nil
 	})
-	host := deploytest.NewPluginHost(nil, nil, program, loaders...)
+	hostF := deploytest.NewPluginHostF(nil, nil, programF, loaders...)
 
 	p := &TestPlan{
-		Options: UpdateOptions{Host: host, GeneratePlan: true, Experimental: true},
+		Options: TestUpdateOptions{
+			HostF:         hostF,
+			UpdateOptions: UpdateOptions{GeneratePlan: true, Experimental: true},
+		},
 	}
 
 	project := p.GetProject()
@@ -902,7 +915,7 @@ func TestPlannedOutputChanges(t *testing.T) {
 		"foo":  "bar",
 		"frob": "baz",
 	})
-	program := deploytest.NewLanguageRuntime(func(_ plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
+	programF := deploytest.NewLanguageRuntimeF(func(_ plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
 		urn, _, _, err := monitor.RegisterResource("pkgA:m:typA", "resA", true, deploytest.ResourceOptions{})
 		assert.NoError(t, err)
 
@@ -911,10 +924,13 @@ func TestPlannedOutputChanges(t *testing.T) {
 
 		return nil
 	})
-	host := deploytest.NewPluginHost(nil, nil, program, loaders...)
+	hostF := deploytest.NewPluginHostF(nil, nil, programF, loaders...)
 
 	p := &TestPlan{
-		Options: UpdateOptions{Host: host, GeneratePlan: true, Experimental: true},
+		Options: TestUpdateOptions{
+			HostF:         hostF,
+			UpdateOptions: UpdateOptions{GeneratePlan: true, Experimental: true},
+		},
 	}
 
 	project := p.GetProject()
@@ -960,8 +976,9 @@ func TestPlannedInputOutputDifferences(t *testing.T) {
 				) (resource.ID, resource.PropertyMap, resource.Status, error) {
 					return resource.ID("created-id-" + urn.Name()), createOutputs, resource.StatusOK, nil
 				},
-				UpdateF: func(urn resource.URN, id resource.ID, olds, news resource.PropertyMap, timeout float64,
-					ignoreChanges []string, preview bool,
+				UpdateF: func(urn resource.URN, id resource.ID,
+					oldInputs, oldOutputs, newInputs resource.PropertyMap,
+					timeout float64, ignoreChanges []string, preview bool,
 				) (resource.PropertyMap, resource.Status, error) {
 					return updateOutputs, resource.StatusOK, nil
 				},
@@ -973,7 +990,7 @@ func TestPlannedInputOutputDifferences(t *testing.T) {
 		"foo":  "bar",
 		"frob": "baz",
 	})
-	program := deploytest.NewLanguageRuntime(func(_ plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
+	programF := deploytest.NewLanguageRuntimeF(func(_ plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
 		_, _, _, err := monitor.RegisterResource("pkgA:m:typA", "resA", true, deploytest.ResourceOptions{
 			Inputs: inputs,
 		})
@@ -981,10 +998,13 @@ func TestPlannedInputOutputDifferences(t *testing.T) {
 
 		return nil
 	})
-	host := deploytest.NewPluginHost(nil, nil, program, loaders...)
+	hostF := deploytest.NewPluginHostF(nil, nil, programF, loaders...)
 
 	p := &TestPlan{
-		Options: UpdateOptions{Host: host, GeneratePlan: true, Experimental: true},
+		Options: TestUpdateOptions{
+			HostF:         hostF,
+			UpdateOptions: UpdateOptions{GeneratePlan: true, Experimental: true},
+		},
 	}
 
 	project := p.GetProject()
@@ -1057,7 +1077,7 @@ func TestAliasWithPlans(t *testing.T) {
 		"foo":  "bar",
 		"frob": "baz",
 	})
-	program := deploytest.NewLanguageRuntime(func(_ plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
+	programF := deploytest.NewLanguageRuntimeF(func(_ plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
 		_, _, _, err := monitor.RegisterResource("pkgA:m:typA", resourceName, true, deploytest.ResourceOptions{
 			Inputs:    ins,
 			AliasURNs: aliases,
@@ -1066,10 +1086,13 @@ func TestAliasWithPlans(t *testing.T) {
 
 		return nil
 	})
-	host := deploytest.NewPluginHost(nil, nil, program, loaders...)
+	hostF := deploytest.NewPluginHostF(nil, nil, programF, loaders...)
 
 	p := &TestPlan{
-		Options: UpdateOptions{Host: host, GeneratePlan: true, Experimental: true},
+		Options: TestUpdateOptions{
+			HostF:         hostF,
+			UpdateOptions: UpdateOptions{GeneratePlan: true, Experimental: true},
+		},
 	}
 
 	project := p.GetProject()
@@ -1108,17 +1131,12 @@ func TestComputedCanBeDropped(t *testing.T) {
 				) (resource.ID, resource.PropertyMap, resource.Status, error) {
 					return resource.ID("created-id-" + urn.Name()), news, resource.StatusOK, nil
 				},
-				UpdateF: func(urn resource.URN, id resource.ID, olds, news resource.PropertyMap, timeout float64,
-					ignoreChanges []string, preview bool,
-				) (resource.PropertyMap, resource.Status, error) {
-					return news, resource.StatusOK, nil
-				},
 			}, nil
 		}),
 	}
 
 	var resourceInputs resource.PropertyMap
-	program := deploytest.NewLanguageRuntime(func(_ plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
+	programF := deploytest.NewLanguageRuntimeF(func(_ plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
 		urn, _, _, err := monitor.RegisterResource("pkgA:m:typA", "resA", true, deploytest.ResourceOptions{})
 		assert.NoError(t, err)
 
@@ -1133,10 +1151,13 @@ func TestComputedCanBeDropped(t *testing.T) {
 
 		return nil
 	})
-	host := deploytest.NewPluginHost(nil, nil, program, loaders...)
+	hostF := deploytest.NewPluginHostF(nil, nil, programF, loaders...)
 
 	p := &TestPlan{
-		Options: UpdateOptions{Host: host, GeneratePlan: true, Experimental: true},
+		Options: TestUpdateOptions{
+			HostF:         hostF,
+			UpdateOptions: UpdateOptions{GeneratePlan: true, Experimental: true},
+		},
 	}
 
 	project := p.GetProject()
@@ -1242,11 +1263,6 @@ func TestPlannedUpdateWithNondeterministicCheck(t *testing.T) {
 				) (resource.ID, resource.PropertyMap, resource.Status, error) {
 					return resource.ID("created-id-" + urn.Name()), news, resource.StatusOK, nil
 				},
-				UpdateF: func(urn resource.URN, id resource.ID, olds, news resource.PropertyMap, timeout float64,
-					ignoreChanges []string, preview bool,
-				) (resource.PropertyMap, resource.Status, error) {
-					return news, resource.StatusOK, nil
-				},
 				CheckF: func(urn resource.URN,
 					olds, news resource.PropertyMap, _ []byte,
 				) (resource.PropertyMap, []plugin.CheckFailure, error) {
@@ -1272,7 +1288,7 @@ func TestPlannedUpdateWithNondeterministicCheck(t *testing.T) {
 	}
 
 	var ins resource.PropertyMap
-	program := deploytest.NewLanguageRuntime(func(_ plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
+	programF := deploytest.NewLanguageRuntimeF(func(_ plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
 		_, _, outs, err := monitor.RegisterResource("pkgA:m:typA", "resA", true, deploytest.ResourceOptions{
 			Inputs: ins,
 		})
@@ -1287,10 +1303,13 @@ func TestPlannedUpdateWithNondeterministicCheck(t *testing.T) {
 
 		return nil
 	})
-	host := deploytest.NewPluginHost(nil, nil, program, loaders...)
+	hostF := deploytest.NewPluginHostF(nil, nil, programF, loaders...)
 
 	p := &TestPlan{
-		Options: UpdateOptions{Host: host, GeneratePlan: true, Experimental: true},
+		Options: TestUpdateOptions{
+			HostF:         hostF,
+			UpdateOptions: UpdateOptions{GeneratePlan: true, Experimental: true},
+		},
 	}
 
 	project := p.GetProject()
@@ -1337,11 +1356,6 @@ func TestPlannedUpdateWithCheckFailure(t *testing.T) {
 				) (resource.ID, resource.PropertyMap, resource.Status, error) {
 					return "created-id", news, resource.StatusOK, nil
 				},
-				UpdateF: func(urn resource.URN, id resource.ID, olds, news resource.PropertyMap, timeout float64,
-					ignoreChanges []string, preview bool,
-				) (resource.PropertyMap, resource.Status, error) {
-					return news, resource.StatusOK, nil
-				},
 				CheckF: func(urn resource.URN, olds, news resource.PropertyMap,
 					randomSeed []byte,
 				) (resource.PropertyMap, []plugin.CheckFailure, error) {
@@ -1357,17 +1371,20 @@ func TestPlannedUpdateWithCheckFailure(t *testing.T) {
 	}
 
 	var ins resource.PropertyMap
-	program := deploytest.NewLanguageRuntime(func(_ plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
+	programF := deploytest.NewLanguageRuntimeF(func(_ plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
 		_, _, _, err := monitor.RegisterResource("pkgA:m:typA", "resA", true, deploytest.ResourceOptions{
 			Inputs: ins,
 		})
 		assert.NoError(t, err)
 		return nil
 	})
-	host := deploytest.NewPluginHost(nil, nil, program, loaders...)
+	hostF := deploytest.NewPluginHostF(nil, nil, programF, loaders...)
 
 	p := &TestPlan{
-		Options: UpdateOptions{Host: host, GeneratePlan: true, Experimental: true},
+		Options: TestUpdateOptions{
+			HostF:         hostF,
+			UpdateOptions: UpdateOptions{GeneratePlan: true, Experimental: true},
+		},
 	}
 
 	project := p.GetProject()
@@ -1419,15 +1436,18 @@ func TestPluginsAreDownloaded(t *testing.T) {
 
 	semver10 := semver.MustParse("1.0.0")
 
-	program := deploytest.NewLanguageRuntime(func(_ plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
+	programF := deploytest.NewLanguageRuntimeF(func(_ plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
 		_, _, _, err := monitor.RegisterResource("pkgA:m:typA", "resA", true, deploytest.ResourceOptions{})
 		assert.NoError(t, err)
 		return nil
 	}, workspace.PluginSpec{Name: "pkgA"}, workspace.PluginSpec{Name: "pkgB", Version: &semver10})
-	host := deploytest.NewPluginHost(nil, nil, program, loaders...)
+	hostF := deploytest.NewPluginHostF(nil, nil, programF, loaders...)
 
 	p := &TestPlan{
-		Options: UpdateOptions{Host: host, GeneratePlan: true, Experimental: true},
+		Options: TestUpdateOptions{
+			HostF:         hostF,
+			UpdateOptions: UpdateOptions{GeneratePlan: true, Experimental: true},
+		},
 	}
 
 	project := p.GetProject()
@@ -1468,10 +1488,10 @@ func TestProviderDeterministicPreview(t *testing.T) {
 				DiffF: func(
 					urn resource.URN,
 					id resource.ID,
-					olds, news resource.PropertyMap,
+					oldInputs, oldOutputs, newInputs resource.PropertyMap,
 					ignoreChanges []string,
 				) (plugin.DiffResult, error) {
-					if !olds["foo"].DeepEquals(news["foo"]) {
+					if !oldOutputs["foo"].DeepEquals(newInputs["foo"]) {
 						// If foo changes do a replace, we use this to check we get a new name
 						return plugin.DiffResult{
 							Changes:     plugin.DiffSome,
@@ -1485,11 +1505,6 @@ func TestProviderDeterministicPreview(t *testing.T) {
 				) (resource.ID, resource.PropertyMap, resource.Status, error) {
 					return "created-id", news, resource.StatusOK, nil
 				},
-				UpdateF: func(urn resource.URN, id resource.ID, olds, news resource.PropertyMap, timeout float64,
-					ignoreChanges []string, preview bool,
-				) (resource.PropertyMap, resource.Status, error) {
-					return news, resource.StatusOK, nil
-				},
 			}, nil
 		}, deploytest.WithoutGrpc),
 	}
@@ -1498,17 +1513,20 @@ func TestProviderDeterministicPreview(t *testing.T) {
 		"foo": "bar",
 	})
 
-	program := deploytest.NewLanguageRuntime(func(_ plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
+	programF := deploytest.NewLanguageRuntimeF(func(_ plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
 		_, _, _, err := monitor.RegisterResource("pkgA:m:typA", "resA", true, deploytest.ResourceOptions{
 			Inputs: ins,
 		})
 		assert.NoError(t, err)
 		return nil
 	})
-	host := deploytest.NewPluginHost(nil, nil, program, loaders...)
+	hostF := deploytest.NewPluginHostF(nil, nil, programF, loaders...)
 
 	p := &TestPlan{
-		Options: UpdateOptions{Host: host, GeneratePlan: true, Experimental: true},
+		Options: TestUpdateOptions{
+			HostF:         hostF,
+			UpdateOptions: UpdateOptions{GeneratePlan: true, Experimental: true},
+		},
 	}
 
 	project := p.GetProject()
@@ -1555,18 +1573,13 @@ func TestPlannedUpdateWithDependentDelete(t *testing.T) {
 				) (resource.ID, resource.PropertyMap, resource.Status, error) {
 					return resource.ID("created-id-" + urn.Name()), news, resource.StatusOK, nil
 				},
-				UpdateF: func(urn resource.URN, id resource.ID, olds, news resource.PropertyMap, timeout float64,
-					ignoreChanges []string, preview bool,
-				) (resource.PropertyMap, resource.Status, error) {
-					return news, resource.StatusOK, nil
-				},
 				CheckF: func(urn resource.URN,
 					olds, news resource.PropertyMap, _ []byte,
 				) (resource.PropertyMap, []plugin.CheckFailure, error) {
 					return news, nil, nil
 				},
 				DiffF: func(urn resource.URN,
-					id resource.ID, olds, news resource.PropertyMap, ignoreChanges []string,
+					id resource.ID, oldInputs, oldOutputs, newInputs resource.PropertyMap, ignoreChanges []string,
 				) (plugin.DiffResult, error) {
 					if strings.Contains(string(urn), "resA") || strings.Contains(string(urn), "resB") {
 						assert.NotNil(t, diffResult, "Diff was called but diffResult wasn't set")
@@ -1579,7 +1592,7 @@ func TestPlannedUpdateWithDependentDelete(t *testing.T) {
 	}
 
 	var ins resource.PropertyMap
-	program := deploytest.NewLanguageRuntime(func(_ plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
+	programF := deploytest.NewLanguageRuntimeF(func(_ plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
 		resA, _, outs, err := monitor.RegisterResource("pkgA:m:typA", "resA", true, deploytest.ResourceOptions{
 			Inputs: ins,
 		})
@@ -1593,10 +1606,10 @@ func TestPlannedUpdateWithDependentDelete(t *testing.T) {
 
 		return nil
 	})
-	host := deploytest.NewPluginHost(nil, nil, program, loaders...)
+	hostF := deploytest.NewPluginHostF(nil, nil, programF, loaders...)
 
 	p := &TestPlan{
-		Options: UpdateOptions{Host: host, GeneratePlan: true},
+		Options: TestUpdateOptions{HostF: hostF, UpdateOptions: UpdateOptions{GeneratePlan: true}},
 	}
 
 	project := p.GetProject()
@@ -1647,167 +1660,75 @@ func TestPlannedUpdateWithDependentDelete(t *testing.T) {
 func TestResoucesTargeted(t *testing.T) {
 	t.Parallel()
 
-	host := func() plugin.Host {
-		loaders := []*deploytest.ProviderLoader{
-			deploytest.NewProviderLoader("pkgA", semver.MustParse("1.0.0"), func() (plugin.Provider, error) {
-				return &deploytest.Provider{}, nil
-			}),
-		}
-
-		program := deploytest.NewLanguageRuntime(func(_ plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
-			_, _, _, err := monitor.RegisterResource("pkgA:m:typA", "resA", true, deploytest.ResourceOptions{
-				Inputs: resource.PropertyMap{
-					"foo": resource.NewStringProperty("bar"),
-				},
-			})
-			assert.NoError(t, err)
-
-			_, _, _, err = monitor.RegisterResource("pkgA:m:typA", "resB", true, deploytest.ResourceOptions{
-				Inputs: resource.PropertyMap{
-					"foo": resource.NewStringProperty("bar"),
-				},
-			})
-			assert.NoError(t, err)
-
-			return nil
-		})
-
-		host := deploytest.NewPluginHost(nil, nil, program, loaders...)
-		return host
-	}()
-
-	p := &TestPlan{}
-
-	project := p.GetProject()
-
-	// Create the update plan with only targeted resources.
-	plan, res := TestOp(Update).Plan(project, p.GetTarget(t, nil), UpdateOptions{
-		Host:         host,
-		Experimental: true,
-		GeneratePlan: true,
-		UpdateTargets: deploy.NewUrnTargets([]string{
-			"urn:pulumi:test::test::pkgA:m:typA::resB",
-		}),
-	}, p.BackendClient, nil)
-	assert.Nil(t, res)
-	assert.NotNil(t, plan)
-
-	// Check that running an update with everything targeted fails due to our plan being constrained
-	// to the resource.
-	_, res = TestOp(Update).Run(project, p.GetTarget(t, nil), UpdateOptions{
-		// Clone the plan as the plan will be mutated by the engine and useless in future runs.
-		Plan:         plan.Clone(),
-		Host:         host,
-		Experimental: true,
-	}, false, p.BackendClient, nil)
-	assert.NotNil(t, res)
-
-	// Check that running an update with the same UpdateTargets as the Plan succeeds.
-	_, res = TestOp(Update).Run(project, p.GetTarget(t, nil), UpdateOptions{
-		// Clone the plan as the plan will be mutated by the engine and useless in future runs.
-		Plan:         plan.Clone(),
-		Host:         host,
-		Experimental: true,
-		UpdateTargets: deploy.NewUrnTargets([]string{
-			"urn:pulumi:test::test::pkgA:m:typA::resB",
-		}),
-	}, false, p.BackendClient, nil)
-	assert.Nil(t, res)
-}
-
-// TestReplaceSpecificTargetsPlan checks when replace targets are specified and update targets are not,
-// unspecified targets are not targeted.
-//
-// Tracks a regression where update targets was empty, which is interpreted as an unconstrained update
-// causing all resources to be targeted despite replace targets being specified.
-func TestReplaceSpecificTargetsPlan(t *testing.T) {
-	t.Parallel()
-
-	p := &TestPlan{}
-
 	loaders := []*deploytest.ProviderLoader{
 		deploytest.NewProviderLoader("pkgA", semver.MustParse("1.0.0"), func() (plugin.Provider, error) {
 			return &deploytest.Provider{}, nil
 		}),
 	}
 
-	// Initial state
-	fooVal := "bar"
-
-	// Don't try to create resB yet.
-	createResB := false
-
-	program := deploytest.NewLanguageRuntime(func(_ plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
-		stackURN, _, _, err := monitor.RegisterResource("pulumi:pulumi:Stack", "test-test", false)
-		assert.NoError(t, err)
-
-		_, _, _, err = monitor.RegisterResource("pkgA:m:typA", "resA", true, deploytest.ResourceOptions{
+	programF := deploytest.NewLanguageRuntimeF(func(_ plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
+		_, _, _, err := monitor.RegisterResource("pkgA:m:typA", "resA", true, deploytest.ResourceOptions{
 			Inputs: resource.PropertyMap{
-				"foo": resource.NewStringProperty(fooVal),
+				"foo": resource.NewStringProperty("bar"),
 			},
-			ReplaceOnChanges: []string{"foo"},
 		})
 		assert.NoError(t, err)
 
-		if createResB {
-			// Now try to create resB which is not targeted and should show up in the plan.
-			_, _, _, err := monitor.RegisterResource("pkgA:m:typA", "resB", true, deploytest.ResourceOptions{
-				Inputs: resource.PropertyMap{
-					"foo": resource.NewStringProperty(fooVal),
-				},
-			})
-			assert.NoError(t, err)
-		}
-
-		err = monitor.RegisterResourceOutputs(stackURN, resource.PropertyMap{
-			"foo": resource.NewStringProperty(fooVal),
+		_, _, _, err = monitor.RegisterResource("pkgA:m:typA", "resB", true, deploytest.ResourceOptions{
+			Inputs: resource.PropertyMap{
+				"foo": resource.NewStringProperty("bar"),
+			},
 		})
-
 		assert.NoError(t, err)
 
 		return nil
 	})
 
-	p.Options.Host = deploytest.NewPluginHost(nil, nil, program, loaders...)
+	hostF := deploytest.NewPluginHostF(nil, nil, programF, loaders...)
+
+	p := &TestPlan{}
 
 	project := p.GetProject()
 
-	old, res := TestOp(Update).Run(project, p.GetTarget(t, nil), UpdateOptions{
-		Host: p.Options.Host,
-	}, false, p.BackendClient, nil)
-	assert.Nil(t, res)
-
-	// Configure next update.
-	fooVal = "changed-from-bar" // This triggers a replace
-
-	// Now try to create resB which is not targeted and should not show up in the plan.
-	createResB = true
-
-	urn := resource.URN("urn:pulumi:test::test::pkgA:m:typA::resA")
-	p.Options.ReplaceTargets = deploy.NewUrnTargetsFromUrns([]resource.URN{
-		urn,
-	})
-
 	// Create the update plan with only targeted resources.
-	plan, res := TestOp(Update).Plan(project, p.GetTarget(t, old), UpdateOptions{
-		Host:           p.Options.Host,
-		Experimental:   true,
-		GeneratePlan:   true,
-		ReplaceTargets: p.Options.ReplaceTargets,
+	plan, res := TestOp(Update).Plan(project, p.GetTarget(t, nil), TestUpdateOptions{
+		HostF: hostF,
+		UpdateOptions: UpdateOptions{
+			Experimental: true,
+			GeneratePlan: true,
+			Targets: deploy.NewUrnTargets([]string{
+				"urn:pulumi:test::test::pkgA:m:typA::resB",
+			}),
+		},
 	}, p.BackendClient, nil)
 	assert.Nil(t, res)
 	assert.NotNil(t, plan)
 
-	// Ensure resB is in the plan.
-	foundResB := false
-	for _, r := range plan.ResourcePlans {
-		// Ensure resB's Goal's InputDiff is empty meaning that it is a same operation.
-		if r.Goal != nil && r.Goal.Name == "resB" {
-			foundResB = true
-			assert.Equal(t, []display.StepOp{deploy.OpSame}, r.Ops)
-		}
-	}
-	assert.True(t, foundResB, "resB should be in the plan")
+	// Check that running an update with everything targeted fails due to our plan being constrained
+	// to the resource.
+	_, res = TestOp(Update).Run(project, p.GetTarget(t, nil), TestUpdateOptions{
+		HostF: hostF,
+		UpdateOptions: UpdateOptions{
+			// Clone the plan as the plan will be mutated by the engine and useless in future runs.
+			Plan:         plan.Clone(),
+			Experimental: true,
+		},
+	}, false, p.BackendClient, nil)
+	assert.NotNil(t, res)
+
+	// Check that running an update with the same Targets as the Plan succeeds.
+	_, res = TestOp(Update).Run(project, p.GetTarget(t, nil), TestUpdateOptions{
+		HostF: hostF,
+		UpdateOptions: UpdateOptions{
+			// Clone the plan as the plan will be mutated by the engine and useless in future runs.
+			Plan:         plan.Clone(),
+			Experimental: true,
+			Targets: deploy.NewUrnTargets([]string{
+				"urn:pulumi:test::test::pkgA:m:typA::resB",
+			}),
+		},
+	}, false, p.BackendClient, nil)
+	assert.Nil(t, res)
 }
 
 // This test checks that registering resource outputs does not fail for the root stack resource when it
@@ -1823,7 +1744,7 @@ func TestStackOutputsWithTargetedPlan(t *testing.T) {
 		}),
 	}
 
-	program := deploytest.NewLanguageRuntime(func(_ plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
+	programF := deploytest.NewLanguageRuntimeF(func(_ plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
 		stackURN, _, _, err := monitor.RegisterResource("pulumi:pulumi:Stack", "test-test", false)
 		assert.NoError(t, err)
 
@@ -1840,30 +1761,34 @@ func TestStackOutputsWithTargetedPlan(t *testing.T) {
 		return nil
 	})
 
-	p.Options.Host = deploytest.NewPluginHost(nil, nil, program, loaders...)
+	p.Options.HostF = deploytest.NewPluginHostF(nil, nil, programF, loaders...)
 
 	project := p.GetProject()
 
 	// Create the update plan without targeting the root stack.
-	plan, res := TestOp(Update).Plan(project, p.GetTarget(t, nil), UpdateOptions{
-		Host:         p.Options.Host,
-		Experimental: true,
-		GeneratePlan: true,
-		UpdateTargets: deploy.NewUrnTargetsFromUrns([]resource.URN{
-			resource.URN("urn:pulumi:test::test::pkgA:m:typA::resA"),
-		}),
+	plan, res := TestOp(Update).Plan(project, p.GetTarget(t, nil), TestUpdateOptions{
+		HostF: p.Options.HostF,
+		UpdateOptions: UpdateOptions{
+			Experimental: true,
+			GeneratePlan: true,
+			Targets: deploy.NewUrnTargetsFromUrns([]resource.URN{
+				resource.URN("urn:pulumi:test::test::pkgA:m:typA::resA"),
+			}),
+		},
 	}, p.BackendClient, nil)
 	assert.Nil(t, res)
 	assert.NotNil(t, plan)
 
 	// Check that update succeeds despite the root stack not being targeted.
-	_, res = TestOp(Update).Run(project, p.GetTarget(t, nil), UpdateOptions{
-		Host:         p.Options.Host,
-		GeneratePlan: true,
-		Experimental: true,
-		UpdateTargets: deploy.NewUrnTargetsFromUrns([]resource.URN{
-			resource.URN("urn:pulumi:test::test::pkgA:m:typA::resA"),
-		}),
+	_, res = TestOp(Update).Run(project, p.GetTarget(t, nil), TestUpdateOptions{
+		HostF: p.Options.HostF,
+		UpdateOptions: UpdateOptions{
+			GeneratePlan: true,
+			Experimental: true,
+			Targets: deploy.NewUrnTargetsFromUrns([]resource.URN{
+				resource.URN("urn:pulumi:test::test::pkgA:m:typA::resA"),
+			}),
+		},
 	}, false, p.BackendClient, nil)
 	assert.Nil(t, res)
 }

@@ -8,10 +8,12 @@ import (
 	"reflect"
 
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
+	"github.com/pulumi/pulumi/sdk/v3/go/pulumix"
+	"simple-resource-schema/example/internal"
 )
 
 func ArgFunction(ctx *pulumi.Context, args *ArgFunctionArgs, opts ...pulumi.InvokeOption) (*ArgFunctionResult, error) {
-	opts = pkgInvokeDefaultOpts(opts)
+	opts = internal.PkgInvokeDefaultOpts(opts)
 	var rv ArgFunctionResult
 	err := ctx.Invoke("example::argFunction", args, &rv, opts...)
 	if err != nil {
@@ -61,6 +63,12 @@ func (o ArgFunctionResultOutput) ToArgFunctionResultOutput() ArgFunctionResultOu
 
 func (o ArgFunctionResultOutput) ToArgFunctionResultOutputWithContext(ctx context.Context) ArgFunctionResultOutput {
 	return o
+}
+
+func (o ArgFunctionResultOutput) ToOutput(ctx context.Context) pulumix.Output[ArgFunctionResult] {
+	return pulumix.Output[ArgFunctionResult]{
+		OutputState: o.OutputState,
+	}
 }
 
 func (o ArgFunctionResultOutput) Result() ResourceOutput {

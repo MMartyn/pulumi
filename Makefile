@@ -14,7 +14,7 @@ TESTS_PKGS      := $(shell cd ./tests && go list -tags all ./... | grep -v tests
 VERSION         := $(if ${PULUMI_VERSION},${PULUMI_VERSION},$(shell ./scripts/pulumi-version.sh))
 
 # Relative paths to directories with go.mod files that should be linted.
-LINT_GOLANG_PKGS := sdk pkg tests sdk/go/pulumi-language-go
+LINT_GOLANG_PKGS := sdk pkg tests sdk/go/pulumi-language-go sdk/nodejs/cmd/pulumi-language-nodejs sdk/python/cmd/pulumi-language-python cmd/pulumi-test-language
 
 # Additional arguments to pass to golangci-lint.
 GOLANGCI_LINT_ARGS ?=
@@ -27,9 +27,6 @@ endif
 # Motivation: running `make TEST_ALL_DEPS= test_all` permits running
 # `test_all` without the dependencies.
 TEST_ALL_DEPS ?= build $(SUB_PROJECTS:%=%_install)
-
-GO_TEST      = $(PYTHON) ../scripts/go-test.py $(GO_TEST_FLAGS)
-GO_TEST_FAST = $(PYTHON) ../scripts/go-test.py $(GO_TEST_FAST_FLAGS)
 
 ensure: .ensure.phony go.ensure $(SUB_PROJECTS:%=%_ensure)
 .ensure.phony: sdk/go.mod pkg/go.mod tests/go.mod
@@ -65,29 +62,22 @@ generate::
 	$(call STEP_MESSAGE)
 	echo "This command does not do anything anymore. It will be removed in a future version."
 
-ifeq ($(PULUMI_TEST_COVERAGE_PATH),)
 build:: build-proto go.ensure
 	cd pkg && go install -ldflags "-X github.com/pulumi/pulumi/pkg/v3/version.Version=${VERSION}" ${PROJECT}
 
 install:: .ensure.phony go.ensure
 	cd pkg && GOBIN=$(PULUMI_BIN) go install -ldflags "-X github.com/pulumi/pulumi/pkg/v3/version.Version=${VERSION}" ${PROJECT}
-else
-build:: build_cover ensure_cover
-
-ensure_cover::
-	mkdir -p $(PULUMI_TEST_COVERAGE_PATH)
-
-install:: install_cover
-endif
 
 build_debug::
 	cd pkg && go install -gcflags="all=-N -l" -ldflags "-X github.com/pulumi/pulumi/pkg/v3/version.Version=${VERSION}" ${PROJECT}
 
 build_cover::
-	cd pkg && go test -coverpkg github.com/pulumi/pulumi/pkg/v3/...,github.com/pulumi/pulumi/sdk/v3/... -cover -c -o $(shell go env GOPATH)/bin/pulumi -ldflags "-X github.com/pulumi/pulumi/pkg/v3/version.Version=${VERSION}" ${PROJECT}
+	cd pkg && go build -cover -o ../bin/pulumi \
+		-coverpkg github.com/pulumi/pulumi/pkg/v3/...,github.com/pulumi/pulumi/sdk/v3/... \
+		-ldflags "-X github.com/pulumi/pulumi/pkg/v3/version.Version=${VERSION}" ${PROJECT}
 
 install_cover:: build_cover
-	cp $(shell go env GOPATH)/bin/pulumi $(PULUMI_BIN)
+	cp bin/pulumi $(PULUMI_BIN)
 
 developer_docs::
 	cd developer-docs && make html
@@ -208,7 +198,8 @@ get_schemas: \
 			schema-docker!4.0.0-alpha.0 \
 			schema-awsx!1.0.0-beta.5    \
 			schema-aws-native!0.13.0    \
-			schema-google-native!0.18.2
+			schema-google-native!0.18.2 \
+			schema-google-native!0.27.0
 
 .PHONY: changelog
 changelog:

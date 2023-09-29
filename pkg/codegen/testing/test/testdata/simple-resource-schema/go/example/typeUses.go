@@ -8,6 +8,8 @@ import (
 	"reflect"
 
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
+	"github.com/pulumi/pulumi/sdk/v3/go/pulumix"
+	"simple-resource-schema/example/internal"
 )
 
 type TypeUses struct {
@@ -25,7 +27,7 @@ func NewTypeUses(ctx *pulumi.Context,
 		args = &TypeUsesArgs{}
 	}
 
-	opts = pkgResourceDefaultOpts(opts)
+	opts = internal.PkgResourceDefaultOpts(opts)
 	var resource TypeUses
 	err := ctx.RegisterResource("example::TypeUses", name, args, &resource, opts...)
 	if err != nil {
@@ -93,6 +95,12 @@ func (i *TypeUses) ToTypeUsesOutputWithContext(ctx context.Context) TypeUsesOutp
 	return pulumi.ToOutputWithContext(ctx, i).(TypeUsesOutput)
 }
 
+func (i *TypeUses) ToOutput(ctx context.Context) pulumix.Output[*TypeUses] {
+	return pulumix.Output[*TypeUses]{
+		OutputState: i.ToTypeUsesOutputWithContext(ctx).OutputState,
+	}
+}
+
 type TypeUsesOutput struct{ *pulumi.OutputState }
 
 func (TypeUsesOutput) ElementType() reflect.Type {
@@ -105,6 +113,12 @@ func (o TypeUsesOutput) ToTypeUsesOutput() TypeUsesOutput {
 
 func (o TypeUsesOutput) ToTypeUsesOutputWithContext(ctx context.Context) TypeUsesOutput {
 	return o
+}
+
+func (o TypeUsesOutput) ToOutput(ctx context.Context) pulumix.Output[*TypeUses] {
+	return pulumix.Output[*TypeUses]{
+		OutputState: o.OutputState,
+	}
 }
 
 func (o TypeUsesOutput) Bar() SomeOtherObjectPtrOutput {

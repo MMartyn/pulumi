@@ -8,11 +8,14 @@ import (
 	"reflect"
 
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
+	"github.com/pulumi/pulumi/sdk/v3/go/pulumix"
+	"internal"
 )
 
 // The list of configurations.
 // API Version: 2020-12-01-preview.
 func ListConfigurations(ctx *pulumi.Context, args *ListConfigurationsArgs, opts ...pulumi.InvokeOption) (*ListConfigurationsResult, error) {
+	opts = internal.PkgInvokeDefaultOpts(opts)
 	var rv ListConfigurationsResult
 	err := ctx.Invoke("myedgeorder::listConfigurations", args, &rv, opts...)
 	if err != nil {
@@ -77,6 +80,12 @@ func (o ListConfigurationsResultOutput) ToListConfigurationsResultOutput() ListC
 
 func (o ListConfigurationsResultOutput) ToListConfigurationsResultOutputWithContext(ctx context.Context) ListConfigurationsResultOutput {
 	return o
+}
+
+func (o ListConfigurationsResultOutput) ToOutput(ctx context.Context) pulumix.Output[ListConfigurationsResult] {
+	return pulumix.Output[ListConfigurationsResult]{
+		OutputState: o.OutputState,
+	}
 }
 
 // Link for the next set of configurations.

@@ -15,7 +15,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -30,6 +29,7 @@ import (
 	"github.com/pulumi/pulumi/pkg/v3/resource/deploy"
 	"github.com/pulumi/pulumi/pkg/v3/resource/stack"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource"
+	"github.com/pulumi/pulumi/sdk/v3/go/common/slice"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/util/cmdutil"
 )
 
@@ -207,7 +207,7 @@ func fprintStackOutputs(w io.Writer, outputs map[string]interface{}) error {
 		return err
 	}
 
-	outKeys := make([]string, 0, len(outputs))
+	outKeys := slice.Prealloc[string](len(outputs))
 	for v := range outputs {
 		outKeys = append(outKeys, v)
 	}
@@ -233,12 +233,12 @@ func stringifyOutput(v interface{}) string {
 		return s
 	}
 
-	b, err := json.Marshal(v)
+	o, err := makeJSONString(v, false /* single line */)
 	if err != nil {
 		return "error: could not format value"
 	}
 
-	return string(b)
+	return o
 }
 
 type treeNode struct {

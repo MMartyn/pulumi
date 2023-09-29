@@ -34,6 +34,7 @@ import (
 	"github.com/pulumi/pulumi/pkg/v3/codegen/schema"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/diag"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource/plugin"
+	"github.com/pulumi/pulumi/sdk/v3/go/common/slice"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/util/cmdutil"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/util/contract"
 )
@@ -1245,7 +1246,7 @@ func (mod *modContext) genResource(w io.Writer, r *schema.Resource) error {
 		var args []*schema.Property
 		if fun.Inputs != nil {
 			// Filter out the __self__ argument from the inputs.
-			args = make([]*schema.Property, 0, len(fun.Inputs.InputShape.Properties)-1)
+			args = slice.Prealloc[*schema.Property](len(fun.Inputs.InputShape.Properties) - 1)
 			for _, arg := range fun.Inputs.InputShape.Properties {
 				if arg.Name == "__self__" {
 					continue
@@ -1543,9 +1544,11 @@ func functionOutputVersionArgsTypeName(fun *schema.Function) string {
 // Generates `${fn}Output(..)` version lifted to work on
 // `Input`-wrapped arguments and producing an `Output`-wrapped result.
 func (mod *modContext) genFunctionOutputVersion(w io.Writer, fun *schema.Function) error {
-	if !fun.NeedsOutputVersion() {
+	if fun.ReturnType == nil {
+		// no need to generate an output version if the function doesn't return anything
 		return nil
 	}
+
 	var argsDefault, sigil string
 	if allOptionalInputs(fun) {
 		// If the number of required input properties was zero, we can make the args object optional.
@@ -1557,6 +1560,11 @@ func (mod *modContext) genFunctionOutputVersion(w io.Writer, fun *schema.Functio
 	argsTypeName := functionOutputVersionArgsTypeName(fun)
 	outputArgsParamDef := fmt.Sprintf("%s%s args%s, ", argsTypeName, sigil, argsDefault)
 	outputArgsParamRef := fmt.Sprintf("args ?? new %s()", argsTypeName)
+
+	if fun.Inputs == nil || len(fun.Inputs.Properties) == 0 {
+		outputArgsParamDef = ""
+		outputArgsParamRef = "InvokeArgs.Empty"
+	}
 
 	fmt.Fprintf(w, "\n")
 	// Emit the doc comment, if any.
@@ -1589,9 +1597,11 @@ func (mod *modContext) genFunctionOutputVersion(w io.Writer, fun *schema.Functio
 		// now the function body
 		fmt.Fprint(w, "        {\n")
 		fmt.Fprint(w, "            var builder = ImmutableDictionary.CreateBuilder<string, object?>();\n")
-		for _, prop := range fun.Inputs.Properties {
-			argumentName := LowerCamelCase(prop.Name)
-			fmt.Fprintf(w, "            builder[\"%s\"] = %s;\n", prop.Name, argumentName)
+		if fun.Inputs != nil {
+			for _, prop := range fun.Inputs.Properties {
+				argumentName := LowerCamelCase(prop.Name)
+				fmt.Fprintf(w, "            builder[\"%s\"] = %s;\n", prop.Name, argumentName)
+			}
 		}
 		fmt.Fprint(w, "            var args = new global::Pulumi.DictionaryInvokeArgs(builder.ToImmutableDictionary());\n")
 		fmt.Fprintf(w, "            return global::Pulumi.Deployment.Instance.%s%s(\"%s\", args, invokeOptions.WithDefaults());\n",
@@ -1604,7 +1614,7 @@ func (mod *modContext) genFunctionOutputVersion(w io.Writer, fun *schema.Functio
 
 // Generate helper type definitions referred to in `genFunctionOutputVersion`.
 func (mod *modContext) genFunctionOutputVersionTypes(w io.Writer, fun *schema.Function) error {
-	if !fun.NeedsOutputVersion() || fun.Inputs == nil {
+	if fun.Inputs == nil || fun.ReturnType == nil || len(fun.Inputs.Properties) == 0 {
 		return nil
 	}
 
@@ -1878,7 +1888,7 @@ func (mod *modContext) genConfig(variables []*schema.Property) (string, error) {
 	fmt.Fprintf(w, "    public static class Config\n")
 	fmt.Fprintf(w, "    {\n")
 
-	fmt.Fprintf(w, "        [System.Diagnostics.CodeAnalysis.SuppressMessage(\"Microsoft.Design\", \"IDE1006\", Justification = \n")
+	fmt.Fprintf(w, "        [global::System.Diagnostics.CodeAnalysis.SuppressMessage(\"Microsoft.Design\", \"IDE1006\", Justification = \n")
 	fmt.Fprintf(w, "        \"Double underscore prefix used to avoid conflicts with variable names.\")]\n")
 	fmt.Fprintf(w, "        private sealed class __Value<T>\n")
 	fmt.Fprintf(w, "        {\n")

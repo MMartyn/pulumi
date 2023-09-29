@@ -6,7 +6,7 @@ import copy
 import warnings
 import pulumi
 import pulumi.runtime
-from typing import Any, Mapping, Optional, Sequence, Union, overload
+from typing import Any, Callable, Mapping, Optional, Sequence, Union, overload
 from . import _utilities
 from . import outputs
 
@@ -81,8 +81,8 @@ def get_integration_runtime_object_metadatum(factory_name: Optional[str] = None,
     __ret__ = pulumi.runtime.invoke('mypkg::getIntegrationRuntimeObjectMetadatum', __args__, opts=opts, typ=GetIntegrationRuntimeObjectMetadatumResult).value
 
     return AwaitableGetIntegrationRuntimeObjectMetadatumResult(
-        next_link=__ret__.next_link,
-        value=__ret__.value)
+        next_link=pulumi.get(__ret__, 'next_link'),
+        value=pulumi.get(__ret__, 'value'))
 
 
 @_utilities.lift_output_func(get_integration_runtime_object_metadatum)

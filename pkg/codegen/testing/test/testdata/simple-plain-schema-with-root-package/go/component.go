@@ -9,6 +9,8 @@ import (
 
 	"errors"
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
+	"github.com/pulumi/pulumi/sdk/v3/go/pulumix"
+	"simple-plain-schema-with-root-package/internal"
 )
 
 type Component struct {
@@ -32,6 +34,7 @@ func NewComponent(ctx *pulumi.Context,
 		return nil, errors.New("missing one or more required arguments")
 	}
 
+	opts = internal.PkgResourceDefaultOpts(opts)
 	var resource Component
 	err := ctx.RegisterRemoteComponentResource("example::Component", name, args, &resource, opts...)
 	if err != nil {
@@ -88,6 +91,12 @@ func (i *Component) ToComponentOutputWithContext(ctx context.Context) ComponentO
 	return pulumi.ToOutputWithContext(ctx, i).(ComponentOutput)
 }
 
+func (i *Component) ToOutput(ctx context.Context) pulumix.Output[*Component] {
+	return pulumix.Output[*Component]{
+		OutputState: i.ToComponentOutputWithContext(ctx).OutputState,
+	}
+}
+
 type ComponentOutput struct{ *pulumi.OutputState }
 
 func (ComponentOutput) ElementType() reflect.Type {
@@ -100,6 +109,12 @@ func (o ComponentOutput) ToComponentOutput() ComponentOutput {
 
 func (o ComponentOutput) ToComponentOutputWithContext(ctx context.Context) ComponentOutput {
 	return o
+}
+
+func (o ComponentOutput) ToOutput(ctx context.Context) pulumix.Output[*Component] {
+	return pulumix.Output[*Component]{
+		OutputState: o.OutputState,
+	}
 }
 
 func (o ComponentOutput) A() pulumi.BoolOutput {

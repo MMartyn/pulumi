@@ -25,6 +25,7 @@ import (
 
 	"github.com/blang/semver"
 	"github.com/hashicorp/hcl/v2"
+	"github.com/pulumi/pulumi/sdk/v3/go/common/slice"
 
 	"gopkg.in/yaml.v3"
 )
@@ -649,7 +650,7 @@ type Language interface {
 }
 
 func sortedLanguageNames(metadata map[string]interface{}) []string {
-	names := make([]string, 0, len(metadata))
+	names := slice.Prealloc[string](len(metadata))
 	for lang := range metadata {
 		names = append(names, lang)
 	}
@@ -1082,8 +1083,12 @@ func (pkg *Package) marshalEnum(t *EnumType) ComplexTypeSpec {
 	}
 
 	return ComplexTypeSpec{
-		ObjectTypeSpec: ObjectTypeSpec{Type: pkg.marshalType(t.ElementType, false).Type, IsOverlay: t.IsOverlay},
-		Enum:           values,
+		ObjectTypeSpec: ObjectTypeSpec{
+			Description: t.Comment,
+			Type:        pkg.marshalType(t.ElementType, false).Type,
+			IsOverlay:   t.IsOverlay,
+		},
+		Enum: values,
 	}
 }
 
@@ -1107,7 +1112,7 @@ func (pkg *Package) marshalResource(r *Resource) (ResourceSpec, error) {
 		stateInputs = &o.ObjectTypeSpec
 	}
 
-	aliases := make([]AliasSpec, 0, len(r.Aliases))
+	aliases := slice.Prealloc[AliasSpec](len(r.Aliases))
 	for _, a := range r.Aliases {
 		aliases = append(aliases, AliasSpec{
 			Name:    a.Name,
@@ -1233,14 +1238,16 @@ func (pkg *Package) marshalProperties(props []*Property, plain bool) (required [
 		}
 
 		specs[p.Name] = PropertySpec{
-			TypeSpec:           pkg.marshalType(typ, plain),
-			Description:        p.Comment,
-			Const:              p.ConstValue,
-			Default:            defaultValue,
-			DefaultInfo:        defaultSpec,
-			DeprecationMessage: p.DeprecationMessage,
-			Language:           lang,
-			Secret:             p.Secret,
+			TypeSpec:             pkg.marshalType(typ, plain),
+			Description:          p.Comment,
+			Const:                p.ConstValue,
+			Default:              defaultValue,
+			DefaultInfo:          defaultSpec,
+			DeprecationMessage:   p.DeprecationMessage,
+			Language:             lang,
+			Secret:               p.Secret,
+			ReplaceOnChanges:     p.ReplaceOnChanges,
+			WillReplaceOnChanges: p.WillReplaceOnChanges,
 		}
 	}
 	return required, specs, nil
@@ -1308,7 +1315,7 @@ func (pkg *Package) marshalType(t Type, plain bool) TypeSpec {
 
 		return TypeSpec{
 			Type: defaultType,
-			Ref:  t.Token,
+			Ref:  pkg.marshalTypeRef(pkg.Reference(), "types", t.Token),
 		}
 	default:
 		switch t {
@@ -1342,7 +1349,7 @@ func (pkg *Package) marshalTypeRef(container PackageReference, section, token st
 	}
 
 	// TODO(schema): this isn't quite right--it doesn't handle schemas sourced from URLs--but it's good enough for now.
-	return fmt.Sprintf("/%s/%v/schema.json#/%s/%s", container.Name(), container.Version(), section, token)
+	return fmt.Sprintf("/%s/v%v/schema.json#/%s/%s", container.Name(), container.Version(), section, token)
 }
 
 func marshalLanguage(lang map[string]interface{}) (map[string]RawMessage, error) {

@@ -8,6 +8,8 @@ import (
 	"reflect"
 
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
+	"github.com/pulumi/pulumi/sdk/v3/go/pulumix"
+	"simple-resource-schema/example/internal"
 )
 
 type FooResource struct {
@@ -23,7 +25,7 @@ func NewFooResource(ctx *pulumi.Context,
 		args = &FooResourceArgs{}
 	}
 
-	opts = pkgResourceDefaultOpts(opts)
+	opts = internal.PkgResourceDefaultOpts(opts)
 	var resource FooResource
 	err := ctx.RegisterRemoteComponentResource("foo::FooResource", name, args, &resource, opts...)
 	if err != nil {
@@ -64,6 +66,12 @@ func (i *FooResource) ToFooResourceOutputWithContext(ctx context.Context) FooRes
 	return pulumi.ToOutputWithContext(ctx, i).(FooResourceOutput)
 }
 
+func (i *FooResource) ToOutput(ctx context.Context) pulumix.Output[*FooResource] {
+	return pulumix.Output[*FooResource]{
+		OutputState: i.ToFooResourceOutputWithContext(ctx).OutputState,
+	}
+}
+
 type FooResourceOutput struct{ *pulumi.OutputState }
 
 func (FooResourceOutput) ElementType() reflect.Type {
@@ -76,6 +84,12 @@ func (o FooResourceOutput) ToFooResourceOutput() FooResourceOutput {
 
 func (o FooResourceOutput) ToFooResourceOutputWithContext(ctx context.Context) FooResourceOutput {
 	return o
+}
+
+func (o FooResourceOutput) ToOutput(ctx context.Context) pulumix.Output[*FooResource] {
+	return pulumix.Output[*FooResource]{
+		OutputState: o.OutputState,
+	}
 }
 
 func (o FooResourceOutput) Foo() ResourceOutput {

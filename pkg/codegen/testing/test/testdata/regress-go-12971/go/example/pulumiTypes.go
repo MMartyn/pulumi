@@ -8,7 +8,11 @@ import (
 	"reflect"
 
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
+	"github.com/pulumi/pulumi/sdk/v3/go/pulumix"
+	"regress-go-12971/example/internal"
 )
+
+var _ = internal.GetEnvOrDefault
 
 type World struct {
 	Name      *string  `pulumi:"name"`
@@ -23,19 +27,19 @@ func (val *World) Defaults() *World {
 	}
 	tmp := *val
 	if tmp.Name == nil {
-		if d := getEnvOrDefault(nil, nil, "WORLD_NAME"); d != nil {
+		if d := internal.GetEnvOrDefault(nil, nil, "WORLD_NAME"); d != nil {
 			name_ := d.(string)
 			tmp.Name = &name_
 		}
 	}
 	if tmp.Populated == nil {
-		if d := getEnvOrDefault(nil, parseEnvBool, "WORLD_POPULATED"); d != nil {
+		if d := internal.GetEnvOrDefault(nil, internal.ParseEnvBool, "WORLD_POPULATED"); d != nil {
 			populated_ := d.(bool)
 			tmp.Populated = &populated_
 		}
 	}
 	if tmp.RadiusKm == nil {
-		if d := getEnvOrDefault(nil, parseEnvFloat, "WORLD_RADIUS_KM"); d != nil {
+		if d := internal.GetEnvOrDefault(nil, internal.ParseEnvFloat, "WORLD_RADIUS_KM"); d != nil {
 			radiusKm_ := d.(float64)
 			tmp.RadiusKm = &radiusKm_
 		}
@@ -67,17 +71,17 @@ func (val *WorldArgs) Defaults() *WorldArgs {
 	}
 	tmp := *val
 	if tmp.Name == nil {
-		if d := getEnvOrDefault(nil, nil, "WORLD_NAME"); d != nil {
+		if d := internal.GetEnvOrDefault(nil, nil, "WORLD_NAME"); d != nil {
 			tmp.Name = pulumi.StringPtr(d.(string))
 		}
 	}
 	if tmp.Populated == nil {
-		if d := getEnvOrDefault(nil, parseEnvBool, "WORLD_POPULATED"); d != nil {
+		if d := internal.GetEnvOrDefault(nil, internal.ParseEnvBool, "WORLD_POPULATED"); d != nil {
 			tmp.Populated = pulumi.BoolPtr(d.(bool))
 		}
 	}
 	if tmp.RadiusKm == nil {
-		if d := getEnvOrDefault(nil, parseEnvFloat, "WORLD_RADIUS_KM"); d != nil {
+		if d := internal.GetEnvOrDefault(nil, internal.ParseEnvFloat, "WORLD_RADIUS_KM"); d != nil {
 			tmp.RadiusKm = pulumi.Float64Ptr(d.(float64))
 		}
 	}
@@ -95,6 +99,12 @@ func (i WorldArgs) ToWorldOutputWithContext(ctx context.Context) WorldOutput {
 	return pulumi.ToOutputWithContext(ctx, i).(WorldOutput)
 }
 
+func (i WorldArgs) ToOutput(ctx context.Context) pulumix.Output[World] {
+	return pulumix.Output[World]{
+		OutputState: i.ToWorldOutputWithContext(ctx).OutputState,
+	}
+}
+
 type WorldOutput struct{ *pulumi.OutputState }
 
 func (WorldOutput) ElementType() reflect.Type {
@@ -107,6 +117,12 @@ func (o WorldOutput) ToWorldOutput() WorldOutput {
 
 func (o WorldOutput) ToWorldOutputWithContext(ctx context.Context) WorldOutput {
 	return o
+}
+
+func (o WorldOutput) ToOutput(ctx context.Context) pulumix.Output[World] {
+	return pulumix.Output[World]{
+		OutputState: o.OutputState,
+	}
 }
 
 func (o WorldOutput) Name() pulumi.StringPtrOutput {

@@ -6,7 +6,7 @@ import copy
 import warnings
 import pulumi
 import pulumi.runtime
-from typing import Any, Mapping, Optional, Sequence, Union, overload
+from typing import Any, Callable, Mapping, Optional, Sequence, Union, overload
 from . import _utilities
 
 __all__ = [
@@ -51,7 +51,7 @@ def func_with_list_param(a: Optional[Sequence[str]] = None,
     __ret__ = pulumi.runtime.invoke('mypkg::funcWithListParam', __args__, opts=opts, typ=FuncWithListParamResult).value
 
     return AwaitableFuncWithListParamResult(
-        r=__ret__.r)
+        r=pulumi.get(__ret__, 'r'))
 
 
 @_utilities.lift_output_func(func_with_list_param)

@@ -15,8 +15,8 @@
 package engine
 
 import (
+	"github.com/pulumi/pulumi/pkg/v3/display"
 	"github.com/pulumi/pulumi/pkg/v3/resource/deploy"
-	"github.com/pulumi/pulumi/sdk/v3/go/common/display"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource/plugin"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/util/contract"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/util/logging"
@@ -50,6 +50,10 @@ func Destroy(
 	logging.V(7).Infof("*** Starting Destroy(preview=%v) ***", dryRun)
 	defer logging.V(7).Infof("*** Destroy(preview=%v) complete ***", dryRun)
 
+	if err := checkTargets(opts.Targets, u.GetTarget().Snapshot); err != nil {
+		return nil, nil, result.FromError(err)
+	}
+
 	return update(ctx, info, deploymentOptions{
 		UpdateOptions: opts,
 		SourceFunc:    newDestroySource,
@@ -60,7 +64,7 @@ func Destroy(
 }
 
 func newDestroySource(
-	client deploy.BackendClient, opts deploymentOptions, proj *workspace.Project, pwd, main string,
+	client deploy.BackendClient, opts deploymentOptions, proj *workspace.Project, pwd, main, projectRoot string,
 	target *deploy.Target, plugctx *plugin.Context, dryRun bool,
 ) (deploy.Source, error) {
 	// Like Update, we need to gather the set of plugins necessary to delete everything in the snapshot.
@@ -73,7 +77,7 @@ func newDestroySource(
 
 	// Like Update, if we're missing plugins, attempt to download the missing plugins.
 
-	if err := ensurePluginsAreInstalled(plugctx.Request(), plugins.Deduplicate(),
+	if err := ensurePluginsAreInstalled(plugctx.Request(), plugctx.Diag, plugins.Deduplicate(),
 		plugctx.Host.GetProjectPlugins()); err != nil {
 		logging.V(7).Infof("newDestroySource(): failed to install missing plugins: %v", err)
 	}

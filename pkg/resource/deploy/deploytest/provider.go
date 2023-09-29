@@ -40,24 +40,24 @@ type Provider struct {
 
 	CheckConfigF func(urn resource.URN, olds,
 		news resource.PropertyMap, allowUnknowns bool) (resource.PropertyMap, []plugin.CheckFailure, error)
-	DiffConfigF func(urn resource.URN, olds, news resource.PropertyMap,
+	DiffConfigF func(urn resource.URN, oldInputs, oldOutputs, newInputs resource.PropertyMap,
 		ignoreChanges []string) (plugin.DiffResult, error)
 	ConfigureF func(news resource.PropertyMap) error
 
 	CheckF func(urn resource.URN,
 		olds, news resource.PropertyMap, randomSeed []byte) (resource.PropertyMap, []plugin.CheckFailure, error)
-	DiffF func(urn resource.URN, id resource.ID, olds, news resource.PropertyMap,
+	DiffF func(urn resource.URN, id resource.ID, oldInputs, oldOutputs, newInputs resource.PropertyMap,
 		ignoreChanges []string) (plugin.DiffResult, error)
 	CreateF func(urn resource.URN, inputs resource.PropertyMap, timeout float64,
 		preview bool) (resource.ID, resource.PropertyMap, resource.Status, error)
-	UpdateF func(urn resource.URN, id resource.ID, olds, news resource.PropertyMap, timeout float64,
+	UpdateF func(urn resource.URN, id resource.ID, oldInputs, oldOutputs, newInputs resource.PropertyMap, timeout float64,
 		ignoreChanges []string, preview bool) (resource.PropertyMap, resource.Status, error)
 	DeleteF func(urn resource.URN, id resource.ID, olds resource.PropertyMap, timeout float64) (resource.Status, error)
 	ReadF   func(urn resource.URN, id resource.ID,
 		inputs, state resource.PropertyMap) (plugin.ReadResult, resource.Status, error)
 
 	ConstructF func(monitor *ResourceMonitor, typ, name string, parent resource.URN, inputs resource.PropertyMap,
-		options plugin.ConstructOptions) (plugin.ConstructResult, error)
+		info plugin.ConstructInfo, options plugin.ConstructOptions) (plugin.ConstructResult, error)
 
 	InvokeF func(tok tokens.ModuleMember,
 		inputs resource.PropertyMap) (resource.PropertyMap, []plugin.CheckFailure, error)
@@ -67,7 +67,8 @@ type Provider struct {
 
 	CancelF func() error
 
-	GetMappingF func(key string) ([]byte, string, error)
+	GetMappingF  func(key, provider string) ([]byte, string, error)
+	GetMappingsF func(key string) ([]string, error)
 }
 
 func (prov *Provider) SignalCancellation() error {
@@ -108,13 +109,13 @@ func (prov *Provider) CheckConfig(urn resource.URN, olds,
 	return prov.CheckConfigF(urn, olds, news, allowUnknowns)
 }
 
-func (prov *Provider) DiffConfig(urn resource.URN, olds, news resource.PropertyMap, _ bool,
+func (prov *Provider) DiffConfig(urn resource.URN, oldInputs, oldOutputs, newInputs resource.PropertyMap, _ bool,
 	ignoreChanges []string,
 ) (plugin.DiffResult, error) {
 	if prov.DiffConfigF == nil {
 		return plugin.DiffResult{}, nil
 	}
-	return prov.DiffConfigF(urn, olds, news, ignoreChanges)
+	return prov.DiffConfigF(urn, oldInputs, oldOutputs, newInputs, ignoreChanges)
 }
 
 func (prov *Provider) Configure(inputs resource.PropertyMap) error {
@@ -153,21 +154,21 @@ func (prov *Provider) Create(urn resource.URN, props resource.PropertyMap, timeo
 }
 
 func (prov *Provider) Diff(urn resource.URN, id resource.ID,
-	olds resource.PropertyMap, news resource.PropertyMap, _ bool, ignoreChanges []string,
+	oldInputs, oldOutputs, newInputs resource.PropertyMap, _ bool, ignoreChanges []string,
 ) (plugin.DiffResult, error) {
 	if prov.DiffF == nil {
 		return plugin.DiffResult{}, nil
 	}
-	return prov.DiffF(urn, id, olds, news, ignoreChanges)
+	return prov.DiffF(urn, id, oldInputs, oldOutputs, newInputs, ignoreChanges)
 }
 
-func (prov *Provider) Update(urn resource.URN, id resource.ID, olds resource.PropertyMap, news resource.PropertyMap,
+func (prov *Provider) Update(urn resource.URN, id resource.ID, oldInputs, oldOutputs, newInputs resource.PropertyMap,
 	timeout float64, ignoreChanges []string, preview bool,
 ) (resource.PropertyMap, resource.Status, error) {
 	if prov.UpdateF == nil {
-		return news, resource.StatusOK, nil
+		return newInputs, resource.StatusOK, nil
 	}
-	return prov.UpdateF(urn, id, olds, news, timeout, ignoreChanges, preview)
+	return prov.UpdateF(urn, id, oldInputs, oldOutputs, newInputs, timeout, ignoreChanges, preview)
 }
 
 func (prov *Provider) Delete(urn resource.URN,
@@ -203,7 +204,7 @@ func (prov *Provider) Construct(info plugin.ConstructInfo, typ tokens.Type, name
 	if err != nil {
 		return plugin.ConstructResult{}, err
 	}
-	return prov.ConstructF(monitor, string(typ), string(name), parent, inputs, options)
+	return prov.ConstructF(monitor, string(typ), string(name), parent, inputs, info, options)
 }
 
 func (prov *Provider) Invoke(tok tokens.ModuleMember,
@@ -235,9 +236,16 @@ func (prov *Provider) Call(tok tokens.ModuleMember, args resource.PropertyMap, i
 	return prov.CallF(monitor, tok, args, info, options)
 }
 
-func (prov *Provider) GetMapping(key string) ([]byte, string, error) {
+func (prov *Provider) GetMapping(key, provider string) ([]byte, string, error) {
 	if prov.GetMappingF == nil {
 		return nil, "", nil
 	}
-	return prov.GetMappingF(key)
+	return prov.GetMappingF(key, provider)
+}
+
+func (prov *Provider) GetMappings(key string) ([]string, error) {
+	if prov.GetMappingsF == nil {
+		return []string{}, nil
+	}
+	return prov.GetMappingsF(key)
 }

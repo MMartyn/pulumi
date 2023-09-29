@@ -26,6 +26,7 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource"
+	"github.com/pulumi/pulumi/sdk/v3/go/common/slice"
 	pulumirpc "github.com/pulumi/pulumi/sdk/v3/proto/go"
 )
 
@@ -363,7 +364,7 @@ func TestMergeProviders(t *testing.T) {
 					return err
 				}
 
-				result := make([]string, 0, len(provMap))
+				result := slice.Prealloc[string](len(provMap))
 				for k, p := range provMap {
 					assert.Equal(t, k, p.getPackage(), "pkg should match map key")
 					result = append(result, strings.TrimPrefix(p.getName(), "pulumi:providers:"))
@@ -559,4 +560,46 @@ func (c *resmonClientWithFeatures) SupportsFeature(
 		}, nil
 	}
 	return c.ResourceMonitorClient.SupportsFeature(ctx, req, opts...)
+}
+
+func TestSourcePosition(t *testing.T) {
+	t.Parallel()
+
+	mocks := &testMonitor{
+		NewResourceF: func(args MockResourceArgs) (string, resource.PropertyMap, error) {
+			var sourcePosition *pulumirpc.SourcePosition
+			switch {
+			case args.RegisterRPC != nil:
+				sourcePosition = args.RegisterRPC.SourcePosition
+			case args.ReadRPC != nil:
+				sourcePosition = args.ReadRPC.SourcePosition
+			}
+
+			require.NotNil(t, sourcePosition)
+			assert.True(t, strings.HasSuffix(sourcePosition.Uri, "context_test.go"))
+
+			return "myID", resource.PropertyMap{"foo": resource.NewStringProperty("qux")}, nil
+		},
+	}
+
+	err := RunErr(func(ctx *Context) error {
+		reg := func() error {
+			var res testResource2
+			return ctx.RegisterResource("test:resource:type", "reg", &testResource2Inputs{}, &res)
+		}
+
+		read := func() error {
+			var res testResource2
+			return ctx.ReadResource("test:resource:type", "read", ID("myid"), &testResource2Inputs{}, &res)
+		}
+
+		err := reg()
+		require.NoError(t, err)
+
+		err = read()
+		require.NoError(t, err)
+
+		return nil
+	}, WithMocks("project", "stack", mocks))
+	assert.NoError(t, err)
 }

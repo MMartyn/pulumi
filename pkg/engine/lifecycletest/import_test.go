@@ -24,14 +24,14 @@ func TestImportOption(t *testing.T) {
 		deploytest.NewProviderLoader("pkgA", semver.MustParse("1.0.0"), func() (plugin.Provider, error) {
 			return &deploytest.Provider{
 				DiffF: func(urn resource.URN, id resource.ID,
-					olds, news resource.PropertyMap, ignoreChanges []string,
+					oldInputs, oldOutputs, newInputs resource.PropertyMap, ignoreChanges []string,
 				) (plugin.DiffResult, error) {
-					if olds["foo"].DeepEquals(news["foo"]) {
+					if oldOutputs["foo"].DeepEquals(newInputs["foo"]) {
 						return plugin.DiffResult{Changes: plugin.DiffNone}, nil
 					}
 
 					diffKind := plugin.DiffUpdate
-					if news["foo"].IsString() && news["foo"].StringValue() == "replace" {
+					if newInputs["foo"].IsString() && newInputs["foo"].StringValue() == "replace" {
 						diffKind = plugin.DiffUpdateReplace
 					}
 
@@ -64,10 +64,10 @@ func TestImportOption(t *testing.T) {
 	}
 
 	readID, importID, inputs := resource.ID(""), resource.ID("id"), resource.PropertyMap{}
-	program := deploytest.NewLanguageRuntime(func(_ plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
+	programF := deploytest.NewLanguageRuntimeF(func(_ plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
 		var err error
 		if readID != "" {
-			_, _, err = monitor.ReadResource("pkgA:m:typA", "resA", readID, "", resource.PropertyMap{}, "", "")
+			_, _, err = monitor.ReadResource("pkgA:m:typA", "resA", readID, "", resource.PropertyMap{}, "", "", "")
 		} else {
 			_, _, _, err = monitor.RegisterResource("pkgA:m:typA", "resA", true, deploytest.ResourceOptions{
 				Inputs:   inputs,
@@ -77,10 +77,10 @@ func TestImportOption(t *testing.T) {
 		assert.NoError(t, err)
 		return nil
 	})
-	host := deploytest.NewPluginHost(nil, nil, program, loaders...)
+	hostF := deploytest.NewPluginHostF(nil, nil, programF, loaders...)
 
 	p := &TestPlan{
-		Options: UpdateOptions{Host: host},
+		Options: TestUpdateOptions{HostF: hostF},
 	}
 	provURN := p.NewProviderURN("pkgA", "default", "")
 	resURN := p.NewURN("pkgA:m:typA", "resA", "")
@@ -276,9 +276,9 @@ func TestImportWithDifferingImportIdentifierFormat(t *testing.T) {
 		deploytest.NewProviderLoader("pkgA", semver.MustParse("1.0.0"), func() (plugin.Provider, error) {
 			return &deploytest.Provider{
 				DiffF: func(urn resource.URN, id resource.ID,
-					olds, news resource.PropertyMap, ignoreChanges []string,
+					oldInputs, oldOutputs, newInputs resource.PropertyMap, ignoreChanges []string,
 				) (plugin.DiffResult, error) {
-					if olds["foo"].DeepEquals(news["foo"]) {
+					if oldOutputs["foo"].DeepEquals(newInputs["foo"]) {
 						return plugin.DiffResult{Changes: plugin.DiffNone}, nil
 					}
 
@@ -312,7 +312,7 @@ func TestImportWithDifferingImportIdentifierFormat(t *testing.T) {
 		}),
 	}
 
-	program := deploytest.NewLanguageRuntime(func(_ plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
+	programF := deploytest.NewLanguageRuntimeF(func(_ plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
 		_, _, _, err := monitor.RegisterResource("pkgA:m:typA", "resA", true, deploytest.ResourceOptions{
 			Inputs: resource.PropertyMap{
 				"foo": resource.NewStringProperty("bar"),
@@ -323,10 +323,10 @@ func TestImportWithDifferingImportIdentifierFormat(t *testing.T) {
 		assert.NoError(t, err)
 		return nil
 	})
-	host := deploytest.NewPluginHost(nil, nil, program, loaders...)
+	hostF := deploytest.NewPluginHostF(nil, nil, programF, loaders...)
 
 	p := &TestPlan{
-		Options: UpdateOptions{Host: host},
+		Options: TestUpdateOptions{HostF: hostF},
 	}
 	provURN := p.NewProviderURN("pkgA", "default", "")
 	resURN := p.NewURN("pkgA:m:typA", "resA", "")
@@ -392,7 +392,7 @@ func TestImportUpdatedID(t *testing.T) {
 		}),
 	}
 
-	program := deploytest.NewLanguageRuntime(func(_ plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
+	programF := deploytest.NewLanguageRuntimeF(func(_ plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
 		_, id, _, err := monitor.RegisterResource("pkgA:m:typA", "resA", false, deploytest.ResourceOptions{
 			ImportID: importID,
 		})
@@ -400,7 +400,7 @@ func TestImportUpdatedID(t *testing.T) {
 		assert.Equal(t, actualID, id)
 		return nil
 	})
-	p.Options.Host = deploytest.NewPluginHost(nil, nil, program, loaders...)
+	p.Options.HostF = deploytest.NewPluginHostF(nil, nil, programF, loaders...)
 
 	p.Steps = []TestStep{{Op: Refresh, SkipPreview: true}}
 
@@ -461,17 +461,17 @@ const importSchema = `{
 }`
 
 func diffImportResource(urn resource.URN, id resource.ID,
-	olds, news resource.PropertyMap, ignoreChanges []string,
+	oldInputs, oldOutputs, newInputs resource.PropertyMap, ignoreChanges []string,
 ) (plugin.DiffResult, error) {
-	if olds["foo"].DeepEquals(news["foo"]) && olds["frob"].DeepEquals(news["frob"]) {
+	if oldOutputs["foo"].DeepEquals(newInputs["foo"]) && oldOutputs["frob"].DeepEquals(newInputs["frob"]) {
 		return plugin.DiffResult{Changes: plugin.DiffNone}, nil
 	}
 
 	detailedDiff := make(map[string]plugin.PropertyDiff)
-	if !olds["foo"].DeepEquals(news["foo"]) {
+	if !oldOutputs["foo"].DeepEquals(newInputs["foo"]) {
 		detailedDiff["foo"] = plugin.PropertyDiff{Kind: plugin.DiffUpdate}
 	}
-	if !olds["frob"].DeepEquals(news["frob"]) {
+	if !oldOutputs["frob"].DeepEquals(newInputs["frob"]) {
 		detailedDiff["frob"] = plugin.PropertyDiff{Kind: plugin.DiffUpdate}
 	}
 
@@ -514,15 +514,15 @@ func TestImportPlan(t *testing.T) {
 		}),
 	}
 
-	program := deploytest.NewLanguageRuntime(func(_ plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
+	programF := deploytest.NewLanguageRuntimeF(func(_ plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
 		_, _, _, err := monitor.RegisterResource("pkgA:m:typA", "resA", true, deploytest.ResourceOptions{})
 		assert.NoError(t, err)
 		return nil
 	})
-	host := deploytest.NewPluginHost(nil, nil, program, loaders...)
+	hostF := deploytest.NewPluginHostF(nil, nil, programF, loaders...)
 
 	p := &TestPlan{
-		Options: UpdateOptions{Host: host},
+		Options: TestUpdateOptions{HostF: hostF},
 	}
 
 	// Run the initial update.
@@ -577,7 +577,7 @@ func TestImportIgnoreChanges(t *testing.T) {
 		}),
 	}
 
-	program := deploytest.NewLanguageRuntime(func(_ plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
+	programF := deploytest.NewLanguageRuntimeF(func(_ plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
 		_, _, _, err := monitor.RegisterResource("pkgA:m:typA", "resA", true, deploytest.ResourceOptions{
 			Inputs: resource.PropertyMap{
 				"foo":  resource.NewStringProperty("foo"),
@@ -589,10 +589,10 @@ func TestImportIgnoreChanges(t *testing.T) {
 		assert.NoError(t, err)
 		return nil
 	})
-	host := deploytest.NewPluginHost(nil, nil, program, loaders...)
+	hostF := deploytest.NewPluginHostF(nil, nil, programF, loaders...)
 
 	p := &TestPlan{
-		Options: UpdateOptions{Host: host},
+		Options: TestUpdateOptions{HostF: hostF},
 	}
 
 	project := p.GetProject()
@@ -636,7 +636,7 @@ func TestImportPlanExistingImport(t *testing.T) {
 		}),
 	}
 
-	program := deploytest.NewLanguageRuntime(func(_ plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
+	programF := deploytest.NewLanguageRuntimeF(func(_ plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
 		stackURN, _, _, err := monitor.RegisterResource("pulumi:pulumi:Stack", "test", false)
 		require.NoError(t, err)
 
@@ -654,10 +654,10 @@ func TestImportPlanExistingImport(t *testing.T) {
 		assert.NoError(t, err)
 		return nil
 	})
-	host := deploytest.NewPluginHost(nil, nil, program, loaders...)
+	hostF := deploytest.NewPluginHostF(nil, nil, programF, loaders...)
 
 	p := &TestPlan{
-		Options: UpdateOptions{Host: host},
+		Options: TestUpdateOptions{HostF: hostF},
 	}
 
 	// Run the initial update.
@@ -681,7 +681,7 @@ func TestImportPlanExistingImport(t *testing.T) {
 	}}).Run(project, p.GetTarget(t, snap), p.Options, false, p.BackendClient,
 		func(_ workspace.Project, _ deploy.Target, entries JournalEntries, _ []Event, _ result.Result) result.Result {
 			for _, e := range entries {
-				assert.Equal(t, e.Step.Op(), deploy.OpSame)
+				assert.Equal(t, deploy.OpSame, e.Step.Op())
 			}
 			return nil
 		})
@@ -722,11 +722,11 @@ func TestImportPlanEmptyState(t *testing.T) {
 			}, nil
 		}),
 	}
-	program := deploytest.NewLanguageRuntime(nil)
-	host := deploytest.NewPluginHost(nil, nil, program, loaders...)
+	programF := deploytest.NewLanguageRuntimeF(nil)
+	hostF := deploytest.NewPluginHostF(nil, nil, programF, loaders...)
 
 	p := &TestPlan{
-		Options: UpdateOptions{Host: host},
+		Options: TestUpdateOptions{HostF: hostF},
 	}
 
 	// Run the initial import.
@@ -774,15 +774,15 @@ func TestImportPlanSpecificProvider(t *testing.T) {
 		}),
 	}
 
-	program := deploytest.NewLanguageRuntime(func(_ plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
+	programF := deploytest.NewLanguageRuntimeF(func(_ plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
 		_, _, _, err := monitor.RegisterResource("pulumi:providers:pkgA", "provA", true)
 		assert.NoError(t, err)
 		return nil
 	})
-	host := deploytest.NewPluginHost(nil, nil, program, loaders...)
+	hostF := deploytest.NewPluginHostF(nil, nil, programF, loaders...)
 
 	p := &TestPlan{
-		Options: UpdateOptions{Host: host},
+		Options: TestUpdateOptions{HostF: hostF},
 	}
 
 	// Run the initial update.
@@ -852,15 +852,15 @@ func TestImportPlanSpecificProperties(t *testing.T) {
 		}),
 	}
 
-	program := deploytest.NewLanguageRuntime(func(_ plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
+	programF := deploytest.NewLanguageRuntimeF(func(_ plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
 		_, _, _, err := monitor.RegisterResource("pulumi:providers:pkgA", "provA", true)
 		assert.NoError(t, err)
 		return nil
 	})
-	host := deploytest.NewPluginHost(nil, nil, program, loaders...)
+	hostF := deploytest.NewPluginHostF(nil, nil, programF, loaders...)
 
 	p := &TestPlan{
-		Options: UpdateOptions{Host: host},
+		Options: TestUpdateOptions{HostF: hostF},
 	}
 
 	// Run the initial update.

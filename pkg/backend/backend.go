@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pulumi/pulumi/pkg/v3/backend/display"
+	sdkDisplay "github.com/pulumi/pulumi/pkg/v3/display"
 	"github.com/pulumi/pulumi/pkg/v3/engine"
 	"github.com/pulumi/pulumi/pkg/v3/operations"
 	"github.com/pulumi/pulumi/pkg/v3/resource/deploy"
@@ -30,7 +31,6 @@ import (
 	"github.com/pulumi/pulumi/pkg/v3/util/cancel"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/apitype"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/diag"
-	sdkDisplay "github.com/pulumi/pulumi/sdk/v3/go/common/display"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource/config"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/tokens"
@@ -155,7 +155,7 @@ type Backend interface {
 	ValidateStackName(s string) error
 
 	// DoesProjectExist returns true if a project with the given name exists in this backend, or false otherwise.
-	DoesProjectExist(ctx context.Context, projectName string) (bool, error)
+	DoesProjectExist(ctx context.Context, orgName string, projectName string) (bool, error)
 
 	// GetStack returns a stack object tied to this backend with the given name, or nil if it cannot be found.
 	GetStack(ctx context.Context, stackRef StackReference) (Stack, error)
@@ -189,7 +189,7 @@ type Backend interface {
 	Watch(ctx context.Context, stack Stack, op UpdateOperation, paths []string) result.Result
 
 	// Query against the resource outputs in a stack's state checkpoint.
-	Query(ctx context.Context, op QueryOperation) result.Result
+	Query(ctx context.Context, op QueryOperation) error
 
 	// GetHistory returns all updates for the stack. The returned UpdateInfo slice will be in
 	// descending order (newest first).
@@ -207,12 +207,8 @@ type Backend interface {
 	ExportDeployment(ctx context.Context, stack Stack) (*apitype.UntypedDeployment, error)
 	// ImportDeployment imports the given deployment into the indicated stack.
 	ImportDeployment(ctx context.Context, stack Stack, deployment *apitype.UntypedDeployment) error
-	// Logout logs you out of the backend and removes any stored credentials.
-	Logout() error
-	// LogoutAll logs you out of all the backend and removes any stored credentials.
-	LogoutAll() error
 	// Returns the identity of the current user and any organizations they are in for the backend.
-	CurrentUser() (string, []string, error)
+	CurrentUser() (string, []string, *workspace.TokenInformation, error)
 
 	// Cancel the current update for the given stack.
 	CancelCurrentUpdate(ctx context.Context, stackRef StackReference) error

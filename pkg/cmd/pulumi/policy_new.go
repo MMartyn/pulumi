@@ -26,6 +26,7 @@ import (
 	surveycore "github.com/AlecAivazis/survey/v2/core"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pulumi/pulumi/pkg/v3/backend/display"
+	"github.com/pulumi/pulumi/pkg/v3/backend/httpstate"
 	"github.com/pulumi/pulumi/pkg/v3/engine"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/diag/colors"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource/plugin"
@@ -39,16 +40,12 @@ type newPolicyArgs struct {
 	dir               string
 	force             bool
 	generateOnly      bool
-	interactive       bool
 	offline           bool
 	templateNameOrURL string
-	yes               bool
 }
 
 func newPolicyNewCmd() *cobra.Command {
-	args := newPolicyArgs{
-		interactive: cmdutil.Interactive(),
-	}
+	args := newPolicyArgs{}
 
 	cmd := &cobra.Command{
 		Use:        "new [template|url]",
@@ -89,14 +86,10 @@ func newPolicyNewCmd() *cobra.Command {
 }
 
 func runNewPolicyPack(ctx context.Context, args newPolicyArgs) error {
-	if !args.interactive && !args.yes {
-		return errors.New("--yes must be passed in to proceed when running in non-interactive mode")
-	}
-
 	// Prepare options.
 	opts := display.Options{
 		Color:         cmdutil.GetGlobalColorization(),
-		IsInteractive: args.interactive,
+		IsInteractive: cmdutil.Interactive(),
 	}
 
 	// Get the current working directory.
@@ -141,6 +134,8 @@ func runNewPolicyPack(ctx context.Context, args newPolicyArgs) error {
 		return errors.New("no templates")
 	} else if len(templates) == 1 {
 		template = templates[0]
+	} else if !opts.IsInteractive {
+		return fmt.Errorf("a template must be provided when running in non-interactive mode")
 	} else {
 		if template, err = choosePolicyPackTemplate(templates, opts); err != nil {
 			return err
@@ -197,6 +192,21 @@ func runNewPolicyPack(ctx context.Context, args newPolicyArgs) error {
 			Main:    proj.Main,
 			Runtime: proj.Runtime,
 		}, Root: root}
+
+		// Support Premium Policies.
+		if cloudURL, err := workspace.GetCurrentCloudURL(projinfo.Proj); err == nil {
+			_, hasAccessToken := os.LookupEnv("PULUMI_ACCESS_TOKEN")
+			if !hasAccessToken {
+				account, err := workspace.GetAccount(
+					httpstate.ValueOrDefaultURL(cloudURL),
+				)
+
+				contract.Ignore(err) // We can set access token to "" (string zero value) and be in the same situation.
+				os.Setenv("PULUMI_ACCESS_TOKEN", account.AccessToken)
+				defer os.Unsetenv("PULUMI_ACCESS_TOKEN")
+			}
+		}
+
 		pwd, _, pluginCtx, err := engine.ProjectInfoContext(
 			projinfo,
 			nil,

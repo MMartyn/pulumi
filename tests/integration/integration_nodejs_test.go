@@ -401,6 +401,32 @@ func TestConfigBasicNodeJS(t *testing.T) {
 	})
 }
 
+// Tests configuration error from the perspective of a Pulumi program.
+func TestConfigMissingJS(t *testing.T) {
+	integration.ProgramTest(t, &integration.ProgramTestOptions{
+		Dir:           filepath.Join("config_missing", "nodejs"),
+		Dependencies:  []string{"@pulumi/pulumi"},
+		Quick:         true,
+		ExpectFailure: true,
+		ExtraRuntimeValidation: func(t *testing.T, stackInfo integration.RuntimeValidationStackInfo) {
+			assert.NotEmpty(t, stackInfo.Events)
+			text1 := "Missing required configuration variable 'config_missing_js:notFound'"
+			text2 := "\tplease set a value using the command `pulumi config set --secret config_missing_js:notFound <value>`"
+			var found1, found2 bool
+			for _, event := range stackInfo.Events {
+				if event.DiagnosticEvent != nil && strings.Contains(event.DiagnosticEvent.Message, text1) {
+					found1 = true
+				}
+				if event.DiagnosticEvent != nil && strings.Contains(event.DiagnosticEvent.Message, text2) {
+					found2 = true
+				}
+			}
+			assert.True(t, found1, "expected error %q", text1)
+			assert.True(t, found2, "expected error %q", text2)
+		},
+	})
+}
+
 func TestConfigCaptureNodeJS(t *testing.T) {
 	integration.ProgramTest(t, &integration.ProgramTestOptions{
 		Dir:          filepath.Join("config_capture_e2e", "nodejs"),
@@ -960,6 +986,10 @@ func TestConstructMethodsErrorsNode(t *testing.T) {
 	testConstructMethodsErrors(t, "nodejs", "@pulumi/pulumi")
 }
 
+func TestConstructMethodsProviderNode(t *testing.T) {
+	testConstructMethodsProvider(t, "nodejs", "@pulumi/pulumi")
+}
+
 func TestConstructProviderNode(t *testing.T) {
 	t.Parallel()
 
@@ -1129,6 +1159,59 @@ func TestESMTS(t *testing.T) {
 		Dir:          filepath.Join("nodejs", "esm-ts"),
 		Dependencies: []string{"@pulumi/pulumi"},
 		Quick:        true,
+	})
+}
+
+func TestTSWithPackageJsonInParentDir(t *testing.T) {
+	integration.ProgramTest(t, &integration.ProgramTestOptions{
+		Dir:             filepath.Join("nodejs", "ts-with-package-json-in-parent-dir"),
+		RelativeWorkDir: filepath.Join("myprogram"),
+		Dependencies:    []string{"@pulumi/pulumi"},
+		Quick:           true,
+	})
+}
+
+func TestESMWithPackageJsonInParentDir(t *testing.T) {
+	integration.ProgramTest(t, &integration.ProgramTestOptions{
+		Dir:             filepath.Join("nodejs", "esm-with-package-json-in-parent-dir"),
+		RelativeWorkDir: filepath.Join("myprogram"),
+		Dependencies:    []string{"@pulumi/pulumi"},
+		Quick:           true,
+	})
+}
+
+func TestESMWithoutPackageJsonInParentDir(t *testing.T) {
+	integration.ProgramTest(t, &integration.ProgramTestOptions{
+		Dir:             filepath.Join("nodejs", "esm-package-json-in-parent-dir-without-main"),
+		RelativeWorkDir: filepath.Join("myprogram"),
+		Dependencies:    []string{"@pulumi/pulumi"},
+		Quick:           true,
+	})
+}
+
+func TestPackageJsonInParentDirWithoutMain(t *testing.T) {
+	integration.ProgramTest(t, &integration.ProgramTestOptions{
+		Dir:             filepath.Join("nodejs", "package-json-in-parent-dir-without-main"),
+		RelativeWorkDir: filepath.Join("myprogram"),
+		Dependencies:    []string{"@pulumi/pulumi"},
+		Quick:           true,
+	})
+}
+
+func TestESMTSNestedSrc(t *testing.T) {
+	integration.ProgramTest(t, &integration.ProgramTestOptions{
+		Dir:          filepath.Join("nodejs", "esm-ts-nested-src"),
+		Dependencies: []string{"@pulumi/pulumi"},
+		Quick:        true,
+		Config: map[string]string{
+			"test": "hello world",
+		},
+		ExtraRuntimeValidation: func(t *testing.T, stack integration.RuntimeValidationStackInfo) {
+			assert.Len(t, stack.Outputs, 1)
+			test, ok := stack.Outputs["test"]
+			assert.True(t, ok)
+			assert.Equal(t, "hello world", test)
+		},
 	})
 }
 
@@ -1368,4 +1451,41 @@ func TestConstructProviderPropagationNode(t *testing.T) {
 	t.Parallel()
 
 	testConstructProviderPropagation(t, "nodejs", []string{"@pulumi/pulumi"})
+}
+
+func TestConstructProviderExplicitNode(t *testing.T) {
+	t.Parallel()
+
+	testConstructProviderExplicit(t, "nodejs", []string{"@pulumi/pulumi"})
+}
+
+// Regression test for https://github.com/pulumi/pulumi/issues/7376
+func TestUndefinedStackOutputNode(t *testing.T) {
+	integration.ProgramTest(t, &integration.ProgramTestOptions{
+		Dir:          filepath.Join("nodejs", "undefined-stack-output"),
+		Dependencies: []string{"@pulumi/pulumi"},
+		ExtraRuntimeValidation: func(t *testing.T, stack integration.RuntimeValidationStackInfo) {
+			assert.Equal(t, nil, stack.Outputs["nil"])
+			assert.Equal(t, []interface{}{0.0, nil, nil}, stack.Outputs["list"])
+			assert.Equal(t, map[string]interface{}{
+				"nil2":    nil,
+				"number2": 0.0,
+			}, stack.Outputs["map"])
+
+			var found bool
+			for _, event := range stack.Events {
+				if event.DiagnosticEvent != nil {
+					if event.DiagnosticEvent.Severity == "warning" &&
+						strings.Contains(event.DiagnosticEvent.Message, "will not show as a stack output") {
+
+						assert.Equal(t,
+							"Undefined value (undef) will not show as a stack output.\n",
+							event.DiagnosticEvent.Message)
+						found = true
+					}
+				}
+			}
+			assert.True(t, found, "Did not see undef warning")
+		},
+	})
 }

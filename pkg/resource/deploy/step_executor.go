@@ -25,7 +25,6 @@ import (
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/util/contract"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/util/logging"
-	"github.com/pulumi/pulumi/sdk/v3/go/common/util/result"
 )
 
 const (
@@ -146,11 +145,13 @@ func (se *stepExecutor) ExecuteParallel(antichain antichain) completionToken {
 }
 
 // ExecuteRegisterResourceOutputs services a RegisterResourceOutputsEvent synchronously on the calling goroutine.
-func (se *stepExecutor) ExecuteRegisterResourceOutputs(e RegisterResourceOutputsEvent) result.Result {
+func (se *stepExecutor) ExecuteRegisterResourceOutputs(e RegisterResourceOutputsEvent) error {
 	// Look up the final state in the pending registration list.
 	urn := e.URN()
 	value, has := se.pendingNews.Load(urn)
-	contract.Assertf(has, "cannot complete a resource '%v' whose registration isn't pending", urn)
+	if !has {
+		return fmt.Errorf("cannot complete a resource '%v' whose registration isn't pending", urn)
+	}
 	reg := value.(Step)
 	contract.Assertf(reg != nil, "expected a non-nil resource step ('%v')", urn)
 	se.pendingNews.Delete(urn)
@@ -171,11 +172,11 @@ func (se *stepExecutor) ExecuteRegisterResourceOutputs(e RegisterResourceOutputs
 	if se.deployment.plan != nil {
 		resourcePlan, ok := se.deployment.plan.ResourcePlans[urn]
 		if !ok {
-			return result.FromError(fmt.Errorf("no plan for resource %v", urn))
+			return fmt.Errorf("no plan for resource %v", urn)
 		}
 
 		if err := resourcePlan.checkOutputs(oldOuts, outs); err != nil {
-			return result.FromError(fmt.Errorf("resource violates plan: %w", err))
+			return fmt.Errorf("resource violates plan: %w", err)
 		}
 	}
 
@@ -185,8 +186,8 @@ func (se *stepExecutor) ExecuteRegisterResourceOutputs(e RegisterResourceOutputs
 			resourcePlan.Goal.OutputDiff = NewPlanDiff(oldOuts.Diff(outs))
 			resourcePlan.Outputs = outs
 		} else {
-			return result.FromError(
-				fmt.Errorf("resource should already have a plan from when we called register resources [urn=%v]", urn))
+			return fmt.Errorf(
+				"resource should already have a plan from when we called register resources [urn=%v]", urn)
 		}
 	}
 
@@ -342,6 +343,19 @@ func (se *stepExecutor) executeStep(workerID int, step Step) error {
 					// the key didn't do anything.
 					// msg := fmt.Sprintf("Could not find property '%s' listed in additional secret outputs.", k)
 					// se.deployment.Diag().Warningf(diag.RawMessage(step.URN(), msg))
+				}
+			}
+		}
+
+		// If an input secret is potentially leaked as an output, preemptively mark it as secret.
+		for k, out := range newState.Outputs {
+			if !out.IsSecret() {
+				in, has := newState.Inputs[k]
+				if !has {
+					continue
+				}
+				if in.IsSecret() {
+					newState.Outputs[k] = resource.MakeSecret(out)
 				}
 			}
 		}

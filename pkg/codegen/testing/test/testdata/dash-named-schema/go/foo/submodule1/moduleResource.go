@@ -8,7 +8,9 @@ import (
 	"reflect"
 
 	"dash-named-schema/foo"
+	"dash-named-schema/foo/internal"
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
+	"github.com/pulumi/pulumi/sdk/v3/go/pulumix"
 )
 
 type ModuleResource struct {
@@ -24,6 +26,7 @@ func NewModuleResource(ctx *pulumi.Context,
 		args = &ModuleResourceArgs{}
 	}
 
+	opts = internal.PkgResourceDefaultOpts(opts)
 	var resource ModuleResource
 	err := ctx.RegisterResource("foo-bar:submodule1:ModuleResource", name, args, &resource, opts...)
 	if err != nil {
@@ -87,6 +90,12 @@ func (i *ModuleResource) ToModuleResourceOutputWithContext(ctx context.Context) 
 	return pulumi.ToOutputWithContext(ctx, i).(ModuleResourceOutput)
 }
 
+func (i *ModuleResource) ToOutput(ctx context.Context) pulumix.Output[*ModuleResource] {
+	return pulumix.Output[*ModuleResource]{
+		OutputState: i.ToModuleResourceOutputWithContext(ctx).OutputState,
+	}
+}
+
 type ModuleResourceOutput struct{ *pulumi.OutputState }
 
 func (ModuleResourceOutput) ElementType() reflect.Type {
@@ -99,6 +108,12 @@ func (o ModuleResourceOutput) ToModuleResourceOutput() ModuleResourceOutput {
 
 func (o ModuleResourceOutput) ToModuleResourceOutputWithContext(ctx context.Context) ModuleResourceOutput {
 	return o
+}
+
+func (o ModuleResourceOutput) ToOutput(ctx context.Context) pulumix.Output[*ModuleResource] {
+	return pulumix.Output[*ModuleResource]{
+		OutputState: o.OutputState,
+	}
 }
 
 func (o ModuleResourceOutput) Thing() foo.TopLevelPtrOutput {

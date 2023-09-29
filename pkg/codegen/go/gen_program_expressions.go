@@ -13,6 +13,7 @@ import (
 	"github.com/pulumi/pulumi/pkg/v3/codegen/hcl2/model"
 	"github.com/pulumi/pulumi/pkg/v3/codegen/pcl"
 	"github.com/pulumi/pulumi/pkg/v3/codegen/schema"
+	"github.com/pulumi/pulumi/sdk/v3/go/common/slice"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/util/contract"
 	"github.com/zclconf/go-cty/cty"
 )
@@ -264,6 +265,8 @@ func (g *generator) GenFunctionCallExpression(w io.Writer, expr *model.FunctionC
 		g.Fgenf(w, "filebase64sha256OrPanic(%v)", expr.Args[0])
 	case "notImplemented":
 		g.Fgenf(w, "notImplemented(%v)", expr.Args[0])
+	case "singleOrNone":
+		g.Fgenf(w, "singleOrNone(%v)", expr.Args[0])
 	case pcl.Invoke:
 		if expr.Signature.MultiArgumentInputs {
 			panic(fmt.Errorf("go program-gen does not implement MultiArgumentInputs for function '%v'",
@@ -272,7 +275,7 @@ func (g *generator) GenFunctionCallExpression(w io.Writer, expr *model.FunctionC
 
 		pkg, module, fn, diags := g.functionName(expr.Args[0])
 		contract.Assertf(len(diags) == 0, "We don't allow problems getting the function name")
-		if module == "" {
+		if module == "" || module == "index" {
 			module = pkg
 		}
 		isOut, outArgs, outArgsType := pcl.RecognizeOutputVersionedInvoke(expr)
@@ -446,10 +449,10 @@ func (g *generator) genLiteralValueExpression(w io.Writer, expr *model.LiteralVa
 		strVal := expr.Value.AsString()
 		if isPulumiType {
 			g.Fgenf(w, "%s(", argTypeName)
-			g.genStringLiteral(w, strVal)
+			g.genStringLiteral(w, strVal, true /* allow raw */)
 			g.Fgenf(w, ")")
 		} else {
-			g.genStringLiteral(w, strVal)
+			g.genStringLiteral(w, strVal, true /* allow raw */)
 		}
 	default:
 		contract.Failf("unexpected opaque type in GenLiteralValueExpression: %v (%v)", destType,
@@ -724,12 +727,7 @@ func (g *generator) genTemplateExpression(w io.Writer, expr *model.TemplateExpre
 		g.Fgenf(args, ", %.v", v)
 	}
 	g.Fgenf(w, "fmt.Sprintf(")
-	str := fmtStr.String()
-	if canBeRaw && len(str) > 50 && strings.Count(str, "\n") > 5 {
-		fmt.Fprintf(w, "`%s`", str)
-	} else {
-		g.genStringLiteral(w, fmtStr.String())
-	}
+	g.genStringLiteral(w, fmtStr.String(), canBeRaw)
 	_, err := args.WriteTo(w)
 	contract.AssertNoErrorf(err, "Failed to write arguments")
 	g.Fgenf(w, ")")
@@ -991,15 +989,15 @@ func (g *generator) lowerExpression(expr model.Expression, typ model.Type) (
 ) {
 	expr = pcl.RewritePropertyReferences(expr)
 	expr, diags := pcl.RewriteApplies(expr, nameInfo(0), false /*TODO*/)
+	expr, sTemps, splatDiags := g.rewriteSplat(expr, g.splatSpiller)
 	expr, convertDiags := pcl.RewriteConversions(expr, typ)
 	expr, tTemps, ternDiags := g.rewriteTernaries(expr, g.ternaryTempSpiller)
 	expr, jTemps, jsonDiags := g.rewriteToJSON(expr)
 	expr, rTemps, readDirDiags := g.rewriteReadDir(expr, g.readDirTempSpiller)
-	expr, sTemps, splatDiags := g.rewriteSplat(expr, g.splatSpiller)
 	expr, oTemps, optDiags := g.rewriteOptionals(expr, g.optionalSpiller)
 
 	bufferSize := len(tTemps) + len(jTemps) + len(rTemps) + len(sTemps) + len(oTemps)
-	temps := make([]interface{}, 0, bufferSize)
+	temps := slice.Prealloc[interface{}](bufferSize)
 	for _, t := range tTemps {
 		temps = append(temps, t)
 	}
@@ -1028,7 +1026,7 @@ func (g *generator) lowerExpression(expr model.Expression, typ model.Type) (
 func (g *generator) genNYI(w io.Writer, reason string, vs ...interface{}) {
 	message := fmt.Sprintf("not yet implemented: %s", fmt.Sprintf(reason, vs...))
 	g.diagnostics = append(g.diagnostics, &hcl.Diagnostic{
-		Severity: hcl.DiagError,
+		Severity: hcl.DiagWarning,
 		Summary:  message,
 		Detail:   message,
 	})
@@ -1085,7 +1083,7 @@ func (g *generator) genApply(w io.Writer, expr *model.FunctionCallExpression) {
 func (g *generator) rewriteThenForAllApply(
 	then *model.AnonymousFunctionExpression,
 ) (*model.AnonymousFunctionExpression, []string) {
-	typeConvDecls := make([]string, 0, len(then.Parameters))
+	typeConvDecls := slice.Prealloc[string](len(then.Parameters))
 	for i, v := range then.Parameters {
 		typ := g.argumentTypeName(nil, v.VariableType, false)
 		decl := fmt.Sprintf("%s := _args[%d].(%s)", v.Name, i, typ)
@@ -1111,7 +1109,22 @@ func (g *generator) rewriteThenForAllApply(
 	return then, typeConvDecls
 }
 
-func (g *generator) genStringLiteral(w io.Writer, v string) {
+// Writes a Go string literal.
+// The literal will be a raw string literal if allowRaw is true
+// and the string is long enough to benefit from it.
+func (g *generator) genStringLiteral(w io.Writer, v string, allowRaw bool) {
+	// If the string is longer than 50 characters,
+	// contains at least 5 newlines,
+	// and does not contain a backtick,
+	// use a backtick string literal for readability.
+	canBeRaw := len(v) > 50 &&
+		strings.Count(v, "\n") >= 5 &&
+		!strings.Contains(v, "`")
+	if allowRaw && canBeRaw {
+		fmt.Fprintf(w, "`%s`", v)
+		return
+	}
+
 	g.Fgen(w, "\"")
 	g.Fgen(w, g.escapeString(v))
 	g.Fgen(w, "\"")
@@ -1205,6 +1218,7 @@ var functionPackages = map[string][]string{
 	"sha1":             {"fmt", "crypto/sha1"},
 	"filebase64sha256": {"fmt", "crypto/sha256", "os"},
 	"cwd":              {"os"},
+	"singleOrNone":     {"fmt"},
 }
 
 func (g *generator) genFunctionPackages(x *model.FunctionCallExpression) []string {

@@ -16,6 +16,7 @@ package schema
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -28,6 +29,8 @@ import (
 	"github.com/blang/semver"
 	"github.com/segmentio/encoding/json"
 
+	pkgWorkspace "github.com/pulumi/pulumi/pkg/v3/workspace"
+	"github.com/pulumi/pulumi/sdk/v3/go/common/diag"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource/plugin"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/tokens"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/util/contract"
@@ -174,7 +177,7 @@ func (l *pluginLoader) LoadPackageReference(pkg string, version *semver.Version)
 		}
 	}
 
-	p, err := importPartialSpec(spec, nil, l)
+	p, err := ImportPartialSpec(spec, nil, l)
 	if err != nil {
 		return nil, err
 	}
@@ -210,18 +213,32 @@ func LoadPackageReference(loader Loader, pkg string, version *semver.Version) (P
 }
 
 func (l *pluginLoader) loadSchemaBytes(pkg string, version *semver.Version) ([]byte, *semver.Version, error) {
-	err := l.host.InstallPlugin(workspace.PluginSpec{
-		Kind:    workspace.ResourcePlugin,
-		Name:    pkg,
-		Version: version,
-	})
-	if err != nil {
-		return nil, nil, err
-	}
-
 	pluginInfo, err := l.host.ResolvePlugin(workspace.ResourcePlugin, pkg, version)
 	if err != nil {
-		return nil, nil, err
+		var missingError *workspace.MissingError
+		if errors.As(err, &missingError) {
+			spec := workspace.PluginSpec{
+				Kind:    workspace.ResourcePlugin,
+				Name:    pkg,
+				Version: version,
+			}
+
+			log := func(sev diag.Severity, msg string) {
+				l.host.Log(sev, "", msg, 0)
+			}
+
+			_, err = pkgWorkspace.InstallPlugin(spec, log)
+			if err != nil {
+				return nil, nil, err
+			}
+
+			pluginInfo, err = l.host.ResolvePlugin(workspace.ResourcePlugin, pkg, version)
+			if err != nil {
+				return nil, version, err
+			}
+		} else {
+			return nil, nil, err
+		}
 	}
 	contract.Assertf(pluginInfo != nil, "loading pkg %q: pluginInfo was unexpectedly nil", pkg)
 

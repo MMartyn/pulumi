@@ -6,7 +6,7 @@ import copy
 import warnings
 import pulumi
 import pulumi.runtime
-from typing import Any, Mapping, Optional, Sequence, Union, overload
+from typing import Any, Callable, Mapping, Optional, Sequence, Union, overload
 from . import _utilities
 from . import local
 import pulumi_google_native
@@ -16,32 +16,43 @@ __all__ = ['ComponentArgs', 'Component']
 @pulumi.input_type
 class ComponentArgs:
     def __init__(__self__, *,
-                 local_enum: Optional[pulumi.Input['_local.MyEnum']] = None,
-                 remote_enum: Optional[pulumi.Input['_accesscontextmanager.v1.DevicePolicyAllowedDeviceManagementLevelsItem']] = None):
+                 local_enum: Optional[pulumi.Input['local.MyEnum']] = None,
+                 remote_enum: Optional[pulumi.Input['pulumi_google_native.accesscontextmanager.v1.DevicePolicyAllowedDeviceManagementLevelsItem']] = None):
         """
         The set of arguments for constructing a Component resource.
         """
+        ComponentArgs._configure(
+            lambda key, value: pulumi.set(__self__, key, value),
+            local_enum=local_enum,
+            remote_enum=remote_enum,
+        )
+    @staticmethod
+    def _configure(
+             _setter: Callable[[Any, Any], None],
+             local_enum: Optional[pulumi.Input['local.MyEnum']] = None,
+             remote_enum: Optional[pulumi.Input['pulumi_google_native.accesscontextmanager.v1.DevicePolicyAllowedDeviceManagementLevelsItem']] = None,
+             opts: Optional[pulumi.ResourceOptions]=None):
         if local_enum is not None:
-            pulumi.set(__self__, "local_enum", local_enum)
+            _setter("local_enum", local_enum)
         if remote_enum is not None:
-            pulumi.set(__self__, "remote_enum", remote_enum)
+            _setter("remote_enum", remote_enum)
 
     @property
     @pulumi.getter(name="localEnum")
-    def local_enum(self) -> Optional[pulumi.Input['_local.MyEnum']]:
+    def local_enum(self) -> Optional[pulumi.Input['local.MyEnum']]:
         return pulumi.get(self, "local_enum")
 
     @local_enum.setter
-    def local_enum(self, value: Optional[pulumi.Input['_local.MyEnum']]):
+    def local_enum(self, value: Optional[pulumi.Input['local.MyEnum']]):
         pulumi.set(self, "local_enum", value)
 
     @property
     @pulumi.getter(name="remoteEnum")
-    def remote_enum(self) -> Optional[pulumi.Input['_accesscontextmanager.v1.DevicePolicyAllowedDeviceManagementLevelsItem']]:
+    def remote_enum(self) -> Optional[pulumi.Input['pulumi_google_native.accesscontextmanager.v1.DevicePolicyAllowedDeviceManagementLevelsItem']]:
         return pulumi.get(self, "remote_enum")
 
     @remote_enum.setter
-    def remote_enum(self, value: Optional[pulumi.Input['_accesscontextmanager.v1.DevicePolicyAllowedDeviceManagementLevelsItem']]):
+    def remote_enum(self, value: Optional[pulumi.Input['pulumi_google_native.accesscontextmanager.v1.DevicePolicyAllowedDeviceManagementLevelsItem']]):
         pulumi.set(self, "remote_enum", value)
 
 
@@ -50,8 +61,8 @@ class Component(pulumi.CustomResource):
     def __init__(__self__,
                  resource_name: str,
                  opts: Optional[pulumi.ResourceOptions] = None,
-                 local_enum: Optional[pulumi.Input['_local.MyEnum']] = None,
-                 remote_enum: Optional[pulumi.Input['_accesscontextmanager.v1.DevicePolicyAllowedDeviceManagementLevelsItem']] = None,
+                 local_enum: Optional[pulumi.Input['local.MyEnum']] = None,
+                 remote_enum: Optional[pulumi.Input['pulumi_google_native.accesscontextmanager.v1.DevicePolicyAllowedDeviceManagementLevelsItem']] = None,
                  __props__=None):
         """
         Create a Component resource with the given unique name, props, and options.
@@ -76,13 +87,17 @@ class Component(pulumi.CustomResource):
         if resource_args is not None:
             __self__._internal_init(resource_name, opts, **resource_args.__dict__)
         else:
+            kwargs = kwargs or {}
+            def _setter(key, value):
+                kwargs[key] = value
+            ComponentArgs._configure(_setter, **kwargs)
             __self__._internal_init(resource_name, *args, **kwargs)
 
     def _internal_init(__self__,
                  resource_name: str,
                  opts: Optional[pulumi.ResourceOptions] = None,
-                 local_enum: Optional[pulumi.Input['_local.MyEnum']] = None,
-                 remote_enum: Optional[pulumi.Input['_accesscontextmanager.v1.DevicePolicyAllowedDeviceManagementLevelsItem']] = None,
+                 local_enum: Optional[pulumi.Input['local.MyEnum']] = None,
+                 remote_enum: Optional[pulumi.Input['pulumi_google_native.accesscontextmanager.v1.DevicePolicyAllowedDeviceManagementLevelsItem']] = None,
                  __props__=None):
         opts = pulumi.ResourceOptions.merge(_utilities.get_resource_opts_defaults(), opts)
         if not isinstance(opts, pulumi.ResourceOptions):
@@ -122,11 +137,11 @@ class Component(pulumi.CustomResource):
 
     @property
     @pulumi.getter(name="localEnum")
-    def local_enum(self) -> pulumi.Output[Optional['_local.MyEnum']]:
+    def local_enum(self) -> pulumi.Output[Optional['local.MyEnum']]:
         return pulumi.get(self, "local_enum")
 
     @property
     @pulumi.getter(name="remoteEnum")
-    def remote_enum(self) -> pulumi.Output[Optional['_accesscontextmanager.v1.DevicePolicyAllowedDeviceManagementLevelsItem']]:
+    def remote_enum(self) -> pulumi.Output[Optional['pulumi_google_native.accesscontextmanager.v1.DevicePolicyAllowedDeviceManagementLevelsItem']]:
         return pulumi.get(self, "remote_enum")
 

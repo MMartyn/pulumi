@@ -6,15 +6,16 @@ import (
 	"regexp"
 	"time"
 
+	"github.com/pulumi/pulumi/pkg/v3/display"
 	"github.com/pulumi/pulumi/pkg/v3/engine"
 	"github.com/pulumi/pulumi/pkg/v3/resource/stack"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/apitype"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/diag"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/diag/colors"
-	"github.com/pulumi/pulumi/sdk/v3/go/common/display"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource/config"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource/plugin"
+	"github.com/pulumi/pulumi/sdk/v3/go/common/slice"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/tokens"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/util/contract"
 )
@@ -155,10 +156,12 @@ func convertStepEventMetadata(md engine.StepEventMetadata, showSecrets bool) api
 	for i, v := range md.Keys {
 		keys[i] = string(v)
 	}
-	diffs := make([]string, 0, len(md.Diffs))
+
+	diffs := slice.Prealloc[string](len(md.Diffs))
 	for _, v := range md.Diffs {
 		diffs = append(diffs, string(v))
 	}
+
 	var detailedDiff map[string]apitype.PropertyDiff
 	if md.DetailedDiff != nil {
 		detailedDiff = make(map[string]apitype.PropertyDiff)
@@ -226,14 +229,16 @@ func convertStepEventStateMetadata(md *engine.StepEventStateMetadata,
 		Type: string(md.Type),
 		URN:  string(md.URN),
 
-		Custom:     md.Custom,
-		Delete:     md.Delete,
-		ID:         string(md.ID),
-		Parent:     string(md.Parent),
-		Protect:    md.Protect,
-		Inputs:     inputs,
-		Outputs:    outputs,
-		InitErrors: md.InitErrors,
+		Custom:         md.Custom,
+		Delete:         md.Delete,
+		ID:             string(md.ID),
+		Parent:         string(md.Parent),
+		Provider:       md.Provider,
+		Protect:        md.Protect,
+		RetainOnDelete: md.RetainOnDelete,
+		Inputs:         inputs,
+		Outputs:        outputs,
+		InitErrors:     md.InitErrors,
 	}
 }
 
@@ -336,11 +341,7 @@ func convertJSONStepEventMetadata(md apitype.StepEventMetadata) engine.StepEvent
 	for i, v := range md.Keys {
 		keys[i] = resource.PropertyKey(v)
 	}
-	//nolint:prealloc
-	var diffs []resource.PropertyKey
-	if len(md.Diffs) > 0 {
-		diffs = make([]resource.PropertyKey, 0, len(md.Diffs))
-	}
+	diffs := slice.Prealloc[resource.PropertyKey](len(md.Diffs))
 	for _, v := range md.Diffs {
 		diffs = append(diffs, resource.PropertyKey(v))
 	}
@@ -417,13 +418,15 @@ func convertJSONStepEventStateMetadata(md *apitype.StepEventStateMetadata) *engi
 		Type: tokens.Type(md.Type),
 		URN:  resource.URN(md.URN),
 
-		Custom:     md.Custom,
-		Delete:     md.Delete,
-		ID:         resource.ID(md.ID),
-		Parent:     resource.URN(md.Parent),
-		Protect:    md.Protect,
-		Inputs:     inputs,
-		Outputs:    outputs,
-		InitErrors: md.InitErrors,
+		Custom:         md.Custom,
+		Delete:         md.Delete,
+		ID:             resource.ID(md.ID),
+		Parent:         resource.URN(md.Parent),
+		Provider:       md.Provider,
+		Protect:        md.Protect,
+		RetainOnDelete: md.RetainOnDelete,
+		Inputs:         inputs,
+		Outputs:        outputs,
+		InitErrors:     md.InitErrors,
 	}
 }

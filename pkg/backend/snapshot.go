@@ -37,8 +37,6 @@ import (
 type SnapshotPersister interface {
 	// Persists the given snapshot. Returns an error if the persistence failed.
 	Save(snapshot *deploy.Snapshot) error
-	// Gets the secrets manager used by this persister.
-	SecretsManager() secrets.Manager
 }
 
 // SnapshotManager is an implementation of engine.SnapshotManager that inspects steps and performs
@@ -59,11 +57,11 @@ type SnapshotPersister interface {
 type SnapshotManager struct {
 	persister        SnapshotPersister        // The persister responsible for invalidating and persisting the snapshot
 	baseSnapshot     *deploy.Snapshot         // The base snapshot for this plan
+	secretsManager   secrets.Manager          // The default secrets manager to use
 	resources        []*resource.State        // The list of resources operated upon by this plan
 	operations       []resource.Operation     // The set of operations known to be outstanding in this plan
 	dones            map[*resource.State]bool // The set of resources that have been operated upon already by this plan
 	completeOps      map[*resource.State]bool // The set of resources that have completed their operation
-	doVerify         bool                     // If true, verify the snapshot before persisting it
 	mutationRequests chan<- mutationRequest   // The queue of mutation requests, to be retired serially by the manager
 	cancel           chan bool                // A channel used to request cancellation of any new mutation requests.
 	done             <-chan error             // A channel that sends a single result when the manager has shut down.
@@ -240,6 +238,12 @@ func (ssm *sameSnapshotMutation) mustWrite(step *deploy.SameStep) bool {
 	// If the protection attribute of this resource has changed, we must write the checkpoint.
 	if old.Protect != new.Protect {
 		logging.V(9).Infof("SnapshotManager: mustWrite() true because of Protect")
+		return true
+	}
+
+	// If the source position of this resource has changed, we must write the checkpoint.
+	if old.SourcePosition != new.SourcePosition {
+		logging.V(9).Infof("SnapshotManager: mustWrite() true because of SourcePosition")
 		return true
 	}
 
@@ -631,8 +635,16 @@ func (sm *SnapshotManager) snap() *deploy.Snapshot {
 		// Plugins: sm.plugins, - Explicitly dropped, since we don't use the plugin list in the manifest anymore.
 	}
 
+	// The backend.SnapshotManager and backend.SnapshotPersister will keep track of any changes to
+	// the Snapshot (checkpoint file) in the HTTP backend. We will reuse the snapshot's secrets manager when possible
+	// to ensure that secrets are not re-encrypted on each update.
+	secretsManager := sm.secretsManager
+	if sm.baseSnapshot != nil && secrets.AreCompatible(secretsManager, sm.baseSnapshot.SecretsManager) {
+		secretsManager = sm.baseSnapshot.SecretsManager
+	}
+
 	manifest.Magic = manifest.NewMagic()
-	return deploy.NewSnapshot(manifest, sm.persister.SecretsManager(), resources, operations)
+	return deploy.NewSnapshot(manifest, secretsManager, resources, operations)
 }
 
 // saveSnapshot persists the current snapshot and optionally verifies it afterwards.
@@ -644,10 +656,8 @@ func (sm *SnapshotManager) saveSnapshot() error {
 	if err := sm.persister.Save(snap); err != nil {
 		return fmt.Errorf("failed to save snapshot: %w", err)
 	}
-	if sm.doVerify {
-		if err := snap.VerifyIntegrity(); err != nil {
-			return fmt.Errorf("failed to verify snapshot: %w", err)
-		}
+	if err := snap.VerifyIntegrity(); err != nil {
+		return fmt.Errorf("failed to verify snapshot: %w", err)
 	}
 	return nil
 }
@@ -700,21 +710,25 @@ func (sm *SnapshotManager) unsafeServiceLoop(mutationRequests chan mutationReque
 	}
 }
 
-// NewSnapshotManager creates a new SnapshotManager for the given stack name, using the given persister
-// and base snapshot.
+// NewSnapshotManager creates a new SnapshotManager for the given stack name, using the given persister, default secrets
+// manager and base snapshot.
 //
-// It is *very important* that the baseSnap pointer refers to the same Snapshot
-// given to the engine! The engine will mutate this object and correctness of the
-// SnapshotManager depends on being able to observe this mutation. (This is not ideal...)
-func NewSnapshotManager(persister SnapshotPersister, baseSnap *deploy.Snapshot) *SnapshotManager {
+// It is *very important* that the baseSnap pointer refers to the same Snapshot given to the engine! The engine will
+// mutate this object and correctness of the SnapshotManager depends on being able to observe this mutation. (This is
+// not ideal...)
+func NewSnapshotManager(
+	persister SnapshotPersister,
+	secretsManager secrets.Manager,
+	baseSnap *deploy.Snapshot,
+) *SnapshotManager {
 	mutationRequests, cancel, done := make(chan mutationRequest), make(chan bool), make(chan error)
 
 	manager := &SnapshotManager{
 		persister:        persister,
+		secretsManager:   secretsManager,
 		baseSnapshot:     baseSnap,
 		dones:            make(map[*resource.State]bool),
 		completeOps:      make(map[*resource.State]bool),
-		doVerify:         true,
 		mutationRequests: mutationRequests,
 		cancel:           cancel,
 		done:             done,

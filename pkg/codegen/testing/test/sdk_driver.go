@@ -134,6 +134,11 @@ var PulumiPulumiSDKTests = []*SDKTest{
 		Description: "Simple schema with root package set",
 	},
 	{
+		Directory:   "simple-schema-pyproject",
+		Description: "A simple schema that generates a pyproject.toml file",
+		Skip:        codegen.NewStringSet("go/any", "nodejs/any", "dotnet/any"),
+	},
+	{
 		Directory:   "simple-resource-schema",
 		Description: "Simple schema with local resource properties",
 	},
@@ -251,6 +256,11 @@ var PulumiPulumiSDKTests = []*SDKTest{
 		Skip:        allLanguages.Except("go/any"),
 	},
 	{
+		Directory:   "regress-py-12546",
+		Description: "Regress pulumi/pulumi#12546 affecting Python",
+		Skip:        allLanguages.Except("python/any"),
+	},
+	{
 		Directory:   "docs-collision",
 		Description: "Tests that resources and functions with the same name do not clobber each other.",
 		Skip:        allLanguages.Except("docs/any"),
@@ -290,6 +300,11 @@ var PulumiPulumiSDKTests = []*SDKTest{
 		Description: "Ensure referencing external types/resources with referenced enums import correctly",
 	},
 	{
+		Directory:   "enum-reference-python",
+		Description: "Ensure referencing external types/resources with referenced enums import correctly in Python",
+		Skip:        allLanguages.Except("python/any"),
+	},
+	{
 		Directory:   "external-enum",
 		Description: "Ensure we generate valid tokens for external enums",
 		Skip:        codegen.NewStringSet("dotnet/any"),
@@ -297,6 +312,11 @@ var PulumiPulumiSDKTests = []*SDKTest{
 	{
 		Directory:   "internal-dependencies-go",
 		Description: "Emit Go internal dependencies",
+		Skip:        allLanguages.Except("go/any"),
+	},
+	{
+		Directory:   "go-overridden-internal-module-name",
+		Description: "Go SDK where the internal module name is overridden to be 'utilities'",
 		Skip:        allLanguages.Except("go/any"),
 	},
 	{
@@ -337,6 +357,11 @@ var PulumiPulumiSDKTests = []*SDKTest{
 		Directory:   "embedded-crd-types",
 		Description: "A schema with CRD types with package names different from the main package",
 		Skip:        codegen.NewStringSet("dotnet/any"),
+	},
+	{
+		Directory:   "regress-py-14012",
+		Description: "Regresses https://github.com/pulumi/pulumi/issues/14012",
+		Skip:        allLanguages.Except("python/any"),
 	},
 }
 

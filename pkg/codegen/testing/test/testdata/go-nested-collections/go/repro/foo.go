@@ -8,6 +8,8 @@ import (
 	"reflect"
 
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
+	"github.com/pulumi/pulumi/sdk/v3/go/pulumix"
+	"go-nested-collections/repro/internal"
 )
 
 type Foo struct {
@@ -23,6 +25,7 @@ func NewFoo(ctx *pulumi.Context,
 		args = &FooArgs{}
 	}
 
+	opts = internal.PkgResourceDefaultOpts(opts)
 	var resource Foo
 	err := ctx.RegisterResource("repro:index:Foo", name, args, &resource, opts...)
 	if err != nil {
@@ -84,6 +87,12 @@ func (i *Foo) ToFooOutputWithContext(ctx context.Context) FooOutput {
 	return pulumi.ToOutputWithContext(ctx, i).(FooOutput)
 }
 
+func (i *Foo) ToOutput(ctx context.Context) pulumix.Output[*Foo] {
+	return pulumix.Output[*Foo]{
+		OutputState: i.ToFooOutputWithContext(ctx).OutputState,
+	}
+}
+
 // FooArrayInput is an input type that accepts FooArray and FooArrayOutput values.
 // You can construct a concrete instance of `FooArrayInput` via:
 //
@@ -107,6 +116,12 @@ func (i FooArray) ToFooArrayOutput() FooArrayOutput {
 
 func (i FooArray) ToFooArrayOutputWithContext(ctx context.Context) FooArrayOutput {
 	return pulumi.ToOutputWithContext(ctx, i).(FooArrayOutput)
+}
+
+func (i FooArray) ToOutput(ctx context.Context) pulumix.Output[[]*Foo] {
+	return pulumix.Output[[]*Foo]{
+		OutputState: i.ToFooArrayOutputWithContext(ctx).OutputState,
+	}
 }
 
 // FooMapInput is an input type that accepts FooMap and FooMapOutput values.
@@ -134,6 +149,12 @@ func (i FooMap) ToFooMapOutputWithContext(ctx context.Context) FooMapOutput {
 	return pulumi.ToOutputWithContext(ctx, i).(FooMapOutput)
 }
 
+func (i FooMap) ToOutput(ctx context.Context) pulumix.Output[map[string]*Foo] {
+	return pulumix.Output[map[string]*Foo]{
+		OutputState: i.ToFooMapOutputWithContext(ctx).OutputState,
+	}
+}
+
 type FooOutput struct{ *pulumi.OutputState }
 
 func (FooOutput) ElementType() reflect.Type {
@@ -146,6 +167,12 @@ func (o FooOutput) ToFooOutput() FooOutput {
 
 func (o FooOutput) ToFooOutputWithContext(ctx context.Context) FooOutput {
 	return o
+}
+
+func (o FooOutput) ToOutput(ctx context.Context) pulumix.Output[*Foo] {
+	return pulumix.Output[*Foo]{
+		OutputState: o.OutputState,
+	}
 }
 
 func (o FooOutput) ConditionSets() BarArrayArrayArrayOutput {
@@ -166,6 +193,12 @@ func (o FooArrayOutput) ToFooArrayOutputWithContext(ctx context.Context) FooArra
 	return o
 }
 
+func (o FooArrayOutput) ToOutput(ctx context.Context) pulumix.Output[[]*Foo] {
+	return pulumix.Output[[]*Foo]{
+		OutputState: o.OutputState,
+	}
+}
+
 func (o FooArrayOutput) Index(i pulumi.IntInput) FooOutput {
 	return pulumi.All(o, i).ApplyT(func(vs []interface{}) *Foo {
 		return vs[0].([]*Foo)[vs[1].(int)]
@@ -184,6 +217,12 @@ func (o FooMapOutput) ToFooMapOutput() FooMapOutput {
 
 func (o FooMapOutput) ToFooMapOutputWithContext(ctx context.Context) FooMapOutput {
 	return o
+}
+
+func (o FooMapOutput) ToOutput(ctx context.Context) pulumix.Output[map[string]*Foo] {
+	return pulumix.Output[map[string]*Foo]{
+		OutputState: o.OutputState,
+	}
 }
 
 func (o FooMapOutput) MapIndex(k pulumi.StringInput) FooOutput {

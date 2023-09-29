@@ -29,6 +29,9 @@ import (
 	"time"
 
 	"github.com/blang/semver"
+	"github.com/pulumi/pulumi/sdk/v3/go/common/diag"
+	"github.com/pulumi/pulumi/sdk/v3/go/common/testing/diagtest"
+	"github.com/pulumi/pulumi/sdk/v3/go/common/testing/iotest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -342,7 +345,7 @@ func TestPluginDownload(t *testing.T) {
 	t.Run("Custom http URL", func(t *testing.T) {
 		version := semver.MustParse("4.32.0")
 		spec := PluginSpec{
-			PluginDownloadURL: "http://customurl.jfrog.io/artifactory/pulumi-packages/package-name",
+			PluginDownloadURL: "http://customurl.jfrog.io/artifactory/pulumi-packages/package-name/v${VERSION}/${OS}/${ARCH}",
 			Name:              "mockdl",
 			Version:           &version,
 			Kind:              PluginKind("resource"),
@@ -352,7 +355,7 @@ func TestPluginDownload(t *testing.T) {
 		getHTTPResponse := func(req *http.Request) (io.ReadCloser, int64, error) {
 			assert.Equal(t,
 				"http://customurl.jfrog.io/artifactory/pulumi-packages/"+
-					"package-name/pulumi-resource-mockdl-v4.32.0-darwin-amd64.tar.gz",
+					"package-name/v4.32.0/darwin/amd64/pulumi-resource-mockdl-v4.32.0-darwin-amd64.tar.gz",
 				req.URL.String())
 			return newMockReadCloser(expectedBytes)
 		}
@@ -366,7 +369,7 @@ func TestPluginDownload(t *testing.T) {
 	t.Run("Custom https URL", func(t *testing.T) {
 		version := semver.MustParse("4.32.0")
 		spec := PluginSpec{
-			PluginDownloadURL: "https://customurl.jfrog.io/artifactory/pulumi-packages/package-name",
+			PluginDownloadURL: "https://customurl.jfrog.io/artifactory/pulumi-packages/package-name/v${VERSION}/${OS}/${ARCH}/",
 			Name:              "mockdl",
 			Version:           &version,
 			Kind:              PluginKind("resource"),
@@ -376,7 +379,7 @@ func TestPluginDownload(t *testing.T) {
 		getHTTPResponse := func(req *http.Request) (io.ReadCloser, int64, error) {
 			assert.Equal(t,
 				"https://customurl.jfrog.io/artifactory/pulumi-packages/"+
-					"package-name/pulumi-resource-mockdl-v4.32.0-darwin-amd64.tar.gz",
+					"package-name/v4.32.0/darwin/amd64/pulumi-resource-mockdl-v4.32.0-darwin-amd64.tar.gz",
 				req.URL.String())
 			return newMockReadCloser(expectedBytes)
 		}
@@ -506,7 +509,7 @@ func TestPluginDownload(t *testing.T) {
 			return newMockReadCloser(expectedBytes)
 		}
 
-		chksum := "039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81"
+		chksum := "039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81" //nolint:gosec
 
 		t.Run("Invalid Checksum", func(t *testing.T) {
 			spec := PluginSpec{
@@ -539,6 +542,31 @@ func TestPluginDownload(t *testing.T) {
 				Kind:              PluginKind("resource"),
 				Checksums: map[string][]byte{
 					"darwin-amd64": checksum,
+				},
+			}
+			source, err := spec.GetSource()
+			require.NoError(t, err)
+			r, l, err := source.Download(*spec.Version, "darwin", "amd64", getHTTPResponse)
+			require.NoError(t, err)
+			readBytes, err := io.ReadAll(r)
+			require.NoError(t, err)
+			assert.Equal(t, int(l), len(readBytes))
+			assert.Equal(t, expectedBytes, readBytes)
+		})
+
+		t.Run("Missing Checksum", func(t *testing.T) {
+			// In this test the specification has checksums, but is missing the checksum for the current platform.
+			// There are two sensible ways to handle this:
+			// 1. Behave as if no checksums were specified at all, and simply fall back to not checking anything.
+			// 2. Error that the checksum for the current platform is missing.
+			// We choose to do the former, for now as that's more lenient.
+			spec := PluginSpec{
+				PluginDownloadURL: "",
+				Name:              "mockdl",
+				Version:           &version,
+				Kind:              PluginKind("resource"),
+				Checksums: map[string][]byte{
+					"windows-amd64": {0},
 				},
 			}
 			source, err := spec.GetSource()
@@ -726,24 +754,6 @@ func TestPluginGetLatestVersion(t *testing.T) {
 		assert.Contains(t, err.Error(), "rate limit exceeded")
 		assert.Contains(t, err.Error(), "https://api.github.com/repos/pulumi/pulumi-mock-latest/releases/latest")
 	})
-}
-
-func TestInterpolateURL(t *testing.T) {
-	t.Parallel()
-
-	version := semver.MustParse("1.0.0")
-	const os = "linux"
-	const arch = "amd64"
-	assert.Equal(t, "", interpolateURL("", version, os, arch))
-	assert.Equal(t,
-		"https://get.pulumi.com/releases/plugins",
-		interpolateURL("https://get.pulumi.com/releases/plugins", version, os, arch))
-	assert.Equal(t,
-		"https://github.com/org/repo/releases/download/1.0.0",
-		interpolateURL("https://github.com/org/repo/releases/download/${VERSION}", version, os, arch))
-	assert.Equal(t,
-		"https://github.com/org/repo/releases/download/1.0.0/linux/amd64",
-		interpolateURL("https://github.com/org/repo/releases/download/${VERSION}/${OS}/${ARCH}", version, os, arch))
 }
 
 func TestParsePluginDownloadURLOverride(t *testing.T) {
@@ -1074,4 +1084,144 @@ func TestMissingErrorText(t *testing.T) {
 			assert.Equal(t, tt.ExpectedError, err.Error())
 		})
 	}
+}
+
+//nolint:paralleltest // modifies environment variables
+func TestBundledPluginSearch(t *testing.T) {
+	// Get the path of this executable
+	exe, err := os.Executable()
+	require.NoError(t, err)
+
+	// Create a fake side-by-side plugin next to this executable, it must match one of our bundled names
+	bundledPath := filepath.Join(filepath.Dir(exe), "pulumi-language-nodejs")
+	err = os.WriteFile(bundledPath, []byte{}, 0o700) //nolint: gosec // we intended to write an executable file here
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		err := os.Remove(bundledPath)
+		require.NoError(t, err)
+	})
+
+	// Create another copy of the fake plugin in $PATH
+	pathDir := t.TempDir()
+	t.Setenv("PATH", pathDir)
+	ambientPath := filepath.Join(pathDir, "pulumi-language-nodejs")
+	err = os.WriteFile(ambientPath, []byte{}, 0o700) //nolint: gosec
+	require.NoError(t, err)
+
+	d := diagtest.LogSink(t)
+
+	// Lookup the plugin with ambient search turned on
+	t.Setenv("PULUMI_IGNORE_AMBIENT_PLUGINS", "false")
+	path, err := GetPluginPath(d, LanguagePlugin, "nodejs", nil, nil)
+	require.NoError(t, err)
+	assert.Equal(t, ambientPath, path)
+
+	// Lookup the plugin with ambient search turned off
+	t.Setenv("PULUMI_IGNORE_AMBIENT_PLUGINS", "true")
+	path, err = GetPluginPath(d, LanguagePlugin, "nodejs", nil, nil)
+	require.NoError(t, err)
+	assert.Equal(t, bundledPath, path)
+}
+
+//nolint:paralleltest // modifies environment variables
+func TestAmbientPluginsWarn(t *testing.T) {
+	// Create a fake plugin in the path
+	pathDir := t.TempDir()
+	t.Setenv("PATH", pathDir)
+	ambientPath := filepath.Join(pathDir, "pulumi-resource-mock")
+	err := os.WriteFile(ambientPath, []byte{}, 0o700) //nolint: gosec
+	require.NoError(t, err)
+
+	var stderr bytes.Buffer
+	d := diag.DefaultSink(
+		iotest.LogWriter(t), // stdout
+		&stderr,
+		diag.FormatOptions{Color: "never"},
+	)
+
+	// Lookup the plugin with ambient search turned on
+	t.Setenv("PULUMI_IGNORE_AMBIENT_PLUGINS", "false")
+	path, err := GetPluginPath(d, ResourcePlugin, "mock", nil, nil)
+	require.NoError(t, err)
+	assert.Equal(t, ambientPath, path)
+
+	// Check we get a warning about loading this plugin
+	expectedMessage := fmt.Sprintf("warning: using pulumi-resource-mock from $PATH at %s\n", ambientPath)
+	assert.Equal(t, expectedMessage, stderr.String())
+}
+
+//nolint:paralleltest // modifies environment variables
+func TestBundledPluginsDoNotWarn(t *testing.T) {
+	// Get the path of this executable
+	exe, err := os.Executable()
+	require.NoError(t, err)
+
+	// Create a fake side-by-side plugin next to this executable, it must match one of our bundled names
+	bundledPath := filepath.Join(filepath.Dir(exe), "pulumi-language-nodejs")
+	err = os.WriteFile(bundledPath, []byte{}, 0o700) //nolint: gosec // we intended to write an executable file here
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		err := os.Remove(bundledPath)
+		require.NoError(t, err)
+	})
+
+	// Add the executable directory to PATH
+	t.Setenv("PATH", filepath.Dir(exe))
+
+	var stderr bytes.Buffer
+	d := diag.DefaultSink(
+		iotest.LogWriter(t), // stdout
+		&stderr,
+		diag.FormatOptions{Color: "never"},
+	)
+
+	// Lookup the plugin with ambient search turned on
+	t.Setenv("PULUMI_IGNORE_AMBIENT_PLUGINS", "false")
+	path, err := GetPluginPath(d, LanguagePlugin, "nodejs", nil, nil)
+	require.NoError(t, err)
+	assert.Equal(t, bundledPath, path)
+
+	// Check we don't get a warning about loading this plugin, because it's the bundled one _even_ though it's also on PATH
+	assert.Empty(t, stderr.String())
+}
+
+// Regression test for https://github.com/pulumi/pulumi/issues/13656
+//
+//nolint:paralleltest // modifies environment variables
+func TestSymlinkPathPluginsDoNotWarn(t *testing.T) {
+	// Get the path of this executable
+	exe, err := os.Executable()
+	require.NoError(t, err)
+
+	// Create a fake side-by-side plugin next to this executable, it must match one of our bundled names
+	bundledPath := filepath.Join(filepath.Dir(exe), "pulumi-language-nodejs")
+	err = os.WriteFile(bundledPath, []byte{}, 0o700) //nolint: gosec
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		err := os.Remove(bundledPath)
+		require.NoError(t, err)
+	})
+
+	// Create a fake plugin in the path that is a symlink to the bundled plugin
+	pathDir := t.TempDir()
+	t.Setenv("PATH", pathDir)
+	ambientPath := filepath.Join(pathDir, "pulumi-language-nodejs")
+	err = os.Symlink(bundledPath, ambientPath)
+	require.NoError(t, err)
+
+	var stderr bytes.Buffer
+	d := diag.DefaultSink(
+		iotest.LogWriter(t), // stdout
+		&stderr,
+		diag.FormatOptions{Color: "never"},
+	)
+
+	// Lookup the plugin with ambient search turned on
+	t.Setenv("PULUMI_IGNORE_AMBIENT_PLUGINS", "false")
+	path, err := GetPluginPath(d, LanguagePlugin, "nodejs", nil, nil)
+	require.NoError(t, err)
+	// We expect the ambient path to be returned, but not to warn because it resolves to the same file as the
+	// bundled path.
+	assert.Equal(t, ambientPath, path)
+	assert.Empty(t, stderr.String())
 }

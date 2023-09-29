@@ -26,7 +26,9 @@ import (
 
 	"github.com/pulumi/pulumi/pkg/v3/resource/deploy"
 	"github.com/pulumi/pulumi/pkg/v3/resource/deploy/providers"
+	"github.com/pulumi/pulumi/sdk/v3/go/common/diag"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource/plugin"
+	"github.com/pulumi/pulumi/sdk/v3/go/common/slice"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/tokens"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/util/cmdutil"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/util/contract"
@@ -98,7 +100,7 @@ func (p pluginSet) Deduplicate() pluginSet {
 
 // Values returns a slice of all of the plugins contained within this set.
 func (p pluginSet) Values() []workspace.PluginSpec {
-	plugins := make([]workspace.PluginSpec, 0, len(p))
+	plugins := slice.Prealloc[workspace.PluginSpec](len(p))
 	for _, value := range p {
 		plugins = append(plugins, value)
 	}
@@ -162,6 +164,10 @@ func gatherPluginsFromSnapshot(plugctx *plugin.Context, target *deploy.Target) (
 		if err != nil {
 			return set, err
 		}
+		checksums, err := providers.GetProviderChecksums(res.Inputs)
+		if err != nil {
+			return set, err
+		}
 		logging.V(preparePluginLog).Infof(
 			"gatherPluginsFromSnapshot(): plugin %s %s is required by first-class provider %q", pkg, version, urn)
 		set.Add(workspace.PluginSpec{
@@ -169,6 +175,7 @@ func gatherPluginsFromSnapshot(plugctx *plugin.Context, target *deploy.Target) (
 			Kind:              workspace.ResourcePlugin,
 			Version:           version,
 			PluginDownloadURL: downloadURL,
+			Checksums:         checksums,
 		})
 	}
 	return set, nil
@@ -177,7 +184,9 @@ func gatherPluginsFromSnapshot(plugctx *plugin.Context, target *deploy.Target) (
 // ensurePluginsAreInstalled inspects all plugins in the plugin set and, if any plugins are not currently installed,
 // uses the given backend client to install them. Installations are processed in parallel, though
 // ensurePluginsAreInstalled does not return until all installations are completed.
-func ensurePluginsAreInstalled(ctx context.Context, plugins pluginSet, projectPlugins []workspace.ProjectPlugin) error {
+func ensurePluginsAreInstalled(ctx context.Context, d diag.Sink,
+	plugins pluginSet, projectPlugins []workspace.ProjectPlugin,
+) error {
 	logging.V(preparePluginLog).Infof("ensurePluginsAreInstalled(): beginning")
 	var installTasks errgroup.Group
 	for _, plug := range plugins.Values() {
@@ -186,7 +195,7 @@ func ensurePluginsAreInstalled(ctx context.Context, plugins pluginSet, projectPl
 			continue
 		}
 
-		path, err := workspace.GetPluginPath(plug.Kind, plug.Name, plug.Version, projectPlugins)
+		path, err := workspace.GetPluginPath(d, plug.Kind, plug.Name, plug.Version, projectPlugins)
 		if err == nil && path != "" {
 			logging.V(preparePluginLog).Infof(
 				"ensurePluginsAreInstalled(): plugin %s %s already installed", plug.Name, plug.Version)

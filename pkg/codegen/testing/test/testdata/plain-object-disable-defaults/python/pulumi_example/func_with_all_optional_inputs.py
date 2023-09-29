@@ -6,7 +6,7 @@ import copy
 import warnings
 import pulumi
 import pulumi.runtime
-from typing import Any, Mapping, Optional, Sequence, Union, overload
+from typing import Any, Callable, Mapping, Optional, Sequence, Union, overload
 from . import _utilities
 from ._inputs import *
 
@@ -56,7 +56,7 @@ def func_with_all_optional_inputs(a: Optional[pulumi.InputType['HelmReleaseSetti
     __ret__ = pulumi.runtime.invoke('mypkg::funcWithAllOptionalInputs', __args__, opts=opts, typ=FuncWithAllOptionalInputsResult).value
 
     return AwaitableFuncWithAllOptionalInputsResult(
-        r=__ret__.r)
+        r=pulumi.get(__ret__, 'r'))
 
 
 @_utilities.lift_output_func(func_with_all_optional_inputs)

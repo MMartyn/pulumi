@@ -40,6 +40,7 @@ import (
 	"github.com/pulumi/pulumi/pkg/v3/resource/deploy"
 	"github.com/pulumi/pulumi/pkg/v3/resource/deploy/providers"
 	"github.com/pulumi/pulumi/pkg/v3/resource/stack"
+	pkgWorkspace "github.com/pulumi/pulumi/pkg/v3/workspace"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/diag"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource/plugin"
@@ -52,8 +53,6 @@ import (
 	javagen "github.com/pulumi/pulumi-java/pkg/codegen/java"
 	yamlgen "github.com/pulumi/pulumi-yaml/pkg/pulumiyaml/codegen"
 	"github.com/pulumi/pulumi/pkg/v3/codegen/dotnet"
-	"github.com/pulumi/pulumi/pkg/v3/codegen/nodejs"
-	"github.com/pulumi/pulumi/pkg/v3/codegen/python"
 )
 
 func parseResourceSpec(spec string) (string, resource.URN, error) {
@@ -213,6 +212,42 @@ func parseImportFile(f importFile, protectResources bool) ([]deploy.Import, impo
 		errs = multierror.Append(errs, fmt.Errorf(format, args...))
 	}
 
+	makeUnique, checkAmbiguous := func() (func(int, tokens.QName) tokens.QName, func(tokens.QName) bool) {
+		// Track used resource names.
+		takenNames := map[tokens.QName]struct{}{}
+		// Track indexes that are not unique and need to be made unique.
+		duplicateIndexes := map[int]struct{}{}
+		// Track parent/provider/etc references that are ambiguous when referenced.
+		ambiguousNames := map[tokens.QName]struct{}{}
+		for i, spec := range f.Resources {
+			if _, exists := takenNames[spec.Name]; exists {
+				duplicateIndexes[i] = struct{}{}
+				ambiguousNames[spec.Name] = struct{}{}
+			}
+			// Prepopulate already taken names first to avoid using them in makeUnique.
+			takenNames[spec.Name] = struct{}{}
+		}
+		checkAmbiguous := func(name tokens.QName) bool {
+			_, isAmbiguous := ambiguousNames[name]
+			return isAmbiguous
+		}
+		makeUnique := func(i int, name tokens.QName) tokens.QName {
+			if _, isDuplicate := duplicateIndexes[i]; !isDuplicate {
+				return name
+			}
+			newName := name
+			for suffix := 1; ; suffix++ {
+				if _, exists := takenNames[newName]; !exists {
+					// No conflict.
+					takenNames[newName] = struct{}{}
+					return newName
+				}
+				newName = tokens.QName(fmt.Sprintf("%s_%d", name, suffix))
+			}
+		}
+		return makeUnique, checkAmbiguous
+	}()
+
 	imports := make([]deploy.Import, len(f.Resources))
 	for i, spec := range f.Resources {
 		if spec.Type == "" {
@@ -227,7 +262,7 @@ func parseImportFile(f importFile, protectResources bool) ([]deploy.Import, impo
 
 		imp := deploy.Import{
 			Type:              spec.Type,
-			Name:              spec.Name,
+			Name:              makeUnique(i, spec.Name),
 			ID:                spec.ID,
 			Protect:           protectResources,
 			Properties:        spec.Properties,
@@ -235,6 +270,10 @@ func parseImportFile(f importFile, protectResources bool) ([]deploy.Import, impo
 		}
 
 		if spec.Parent != "" {
+			if checkAmbiguous(tokens.QName(spec.Parent)) {
+				pusherrf("%v has an ambiguous parent",
+					describeResource(i, spec))
+			}
 			urn, ok := f.NameTable[spec.Parent]
 			if !ok {
 				pusherrf("the parent '%v' for %v has no name",
@@ -245,6 +284,10 @@ func parseImportFile(f importFile, protectResources bool) ([]deploy.Import, impo
 		}
 
 		if spec.Provider != "" {
+			if checkAmbiguous(tokens.QName(spec.Provider)) {
+				pusherrf("%v has an ambiguous provider",
+					describeResource(i, spec))
+			}
 			urn, ok := f.NameTable[spec.Provider]
 			if !ok {
 				pusherrf("the provider '%v' for %v has no name",
@@ -293,7 +336,10 @@ func getCurrentDeploymentForStack(
 	return snap, err
 }
 
-type programGeneratorFunc func(p *pcl.Program) (map[string][]byte, hcl.Diagnostics, error)
+type programGeneratorFunc func(
+	p *pcl.Program,
+	loader schema.ReferenceLoader,
+) (map[string][]byte, hcl.Diagnostics, error)
 
 func generateImportedDefinitions(ctx *plugin.Context,
 	out io.Writer, stackName tokens.Name, projectName tokens.PackageName,
@@ -342,7 +388,7 @@ func generateImportedDefinitions(ctx *plugin.Context,
 
 	loader := schema.NewPluginLoader(ctx.Host)
 	return true, importer.GenerateLanguageDefinitions(out, loader, func(w io.Writer, p *pcl.Program) error {
-		files, _, err := programGenerator(p)
+		files, _, err := programGenerator(p, loader)
 		if err != nil {
 			return err
 		}
@@ -388,7 +434,6 @@ func newImportCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "import [type] [name] [id]",
-		Args:  cmdutil.MaximumNArgs(3),
 		Short: "Import resources into an existing stack",
 		Long: "Import resources into an existing stack.\n" +
 			"\n" +
@@ -475,9 +520,11 @@ func newImportCmd() *cobra.Command {
 			var importFile importFile
 			if importFilePath != "" {
 				if len(args) != 0 || parentSpec != "" || providerSpec != "" || len(properties) != 0 {
+					contract.IgnoreError(cmd.Help())
 					return result.Errorf("an inline resource may not be specified in conjunction with an import file")
 				}
 				if from != "" {
+					contract.IgnoreError(cmd.Help())
 					return result.Errorf("a converter may not be specified in conjunction with an import file")
 				}
 				f, err := readImportFile(importFilePath)
@@ -486,20 +533,37 @@ func newImportCmd() *cobra.Command {
 				}
 				importFile = f
 			} else if from != "" {
-				if len(args) != 0 || parentSpec != "" || providerSpec != "" || len(properties) != 0 {
-					return result.Errorf("an inline resource may not be specified in conjunction with an import file")
+				log := func(sev diag.Severity, msg string) {
+					pCtx.Diag.Logf(sev, diag.RawMessage("", msg))
 				}
-				converter, err := plugin.NewConverter(pCtx, from, nil)
+				converter, err := loadConverterPlugin(pCtx, from, log)
 				if err != nil {
-					return result.FromError(err)
+					return result.Errorf("load converter plugin: %w", err)
 				}
 				defer contract.IgnoreClose(converter)
 
 				pCtx.Diag.Warningf(diag.RawMessage("", "Plugin converters are currently experimental"))
 
+				installProvider := func(provider tokens.Package) *semver.Version {
+					log := func(sev diag.Severity, msg string) {
+						pCtx.Diag.Logf(sev, diag.RawMessage("", msg))
+					}
+
+					pluginSpec := workspace.PluginSpec{
+						Name: string(provider),
+						Kind: workspace.ResourcePlugin,
+					}
+					version, err := pkgWorkspace.InstallPlugin(pluginSpec, log)
+					if err != nil {
+						pCtx.Diag.Warningf(diag.Message("", "failed to install provider %q: %v"), provider, err)
+						return nil
+					}
+					return version
+				}
+
 				mapper, err := convert.NewPluginMapper(
 					convert.DefaultWorkspace(), convert.ProviderFactoryFromHost(pCtx.Host),
-					from, nil)
+					from, nil, installProvider)
 				if err != nil {
 					return result.FromError(err)
 				}
@@ -511,7 +575,8 @@ func newImportCmd() *cobra.Command {
 				}
 
 				resp, err := converter.ConvertState(ctx, &plugin.ConvertStateRequest{
-					MapperAddress: grpcServer.Addr(),
+					MapperTarget: grpcServer.Addr(),
+					Args:         args,
 				})
 				if err != nil {
 					return result.FromError(err)
@@ -523,8 +588,22 @@ func newImportCmd() *cobra.Command {
 				}
 				importFile = f
 			} else {
-				if len(args) < 3 {
-					return result.Errorf("an inline resource must be specified if no converter or import file is used")
+				msg := "an inline resource must be specified if no converter or import file is used, missing "
+				if len(args) == 0 {
+					contract.IgnoreError(cmd.Help())
+					return result.Errorf(msg + "type, name, and id")
+				}
+				if len(args) == 1 {
+					contract.IgnoreError(cmd.Help())
+					return result.Errorf(msg + "name and id")
+				}
+				if len(args) == 2 {
+					contract.IgnoreError(cmd.Help())
+					return result.Errorf(msg + "id")
+				}
+				if len(args) > 3 {
+					contract.IgnoreError(cmd.Help())
+					return result.Errorf("only expected at most three arguments")
 				}
 				f, err := makeImportFile(args[0], args[1], args[2], properties, parentSpec, providerSpec, "")
 				if err != nil {
@@ -605,20 +684,26 @@ func newImportCmd() *cobra.Command {
 				return result.FromError(err)
 			}
 
+			wrapper := func(
+				f func(*pcl.Program) (map[string][]byte, hcl.Diagnostics, error),
+			) func(*pcl.Program, schema.ReferenceLoader) (map[string][]byte, hcl.Diagnostics, error) {
+				return func(p *pcl.Program, loader schema.ReferenceLoader) (map[string][]byte, hcl.Diagnostics, error) {
+					return f(p)
+				}
+			}
+
 			var programGenerator programGeneratorFunc
 			switch proj.Runtime.Name() {
 			case "dotnet":
-				programGenerator = dotnet.GenerateProgram
-			case "nodejs":
-				programGenerator = nodejs.GenerateProgram
-			case "python":
-				programGenerator = python.GenerateProgram
+				programGenerator = wrapper(dotnet.GenerateProgram)
 			case "java":
-				programGenerator = javagen.GenerateProgram
+				programGenerator = wrapper(javagen.GenerateProgram)
 			case "yaml":
-				programGenerator = yamlgen.GenerateProgram
+				programGenerator = wrapper(yamlgen.GenerateProgram)
 			default:
-				programGenerator = func(program *pcl.Program) (map[string][]byte, hcl.Diagnostics, error) {
+				programGenerator = func(
+					program *pcl.Program, loader schema.ReferenceLoader,
+				) (map[string][]byte, hcl.Diagnostics, error) {
 					cwd, err := os.Getwd()
 					if err != nil {
 						return nil, nil, err
@@ -636,7 +721,14 @@ func newImportCmd() *cobra.Command {
 						return nil, nil, err
 					}
 
-					files, diagnostics, err := languagePlugin.GenerateProgram(program.Source())
+					loaderServer := schema.NewLoaderServer(loader)
+					grpcServer, err := plugin.NewServer(pCtx, schema.LoaderRegistration(loaderServer))
+					if err != nil {
+						return nil, nil, err
+					}
+					defer contract.IgnoreClose(grpcServer)
+
+					files, diagnostics, err := languagePlugin.GenerateProgram(program.Source(), grpcServer.Addr())
 					if err != nil {
 						return nil, nil, err
 					}

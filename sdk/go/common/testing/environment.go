@@ -44,7 +44,7 @@ type Environment struct {
 
 	// RootPath is a new temp directory where the environment starts.
 	RootPath string
-	// Current working directory.
+	// Current working directory, defaults to the root path.
 	CWD string
 	// Backend to use for commands
 	Backend string
@@ -54,7 +54,8 @@ type Environment struct {
 	Passphrase string
 	// Set to true to turn off setting PULUMI_CONFIG_PASSPHRASE.
 	NoPassphrase bool
-
+	// Set to true to use the local Pulumi dev build from ~/.pulumi-dev/bin/pulumi which get from `make install`
+	UseLocalPulumiBuild bool
 	// Content to pass on stdin, if any
 	Stdin io.Reader
 }
@@ -119,7 +120,7 @@ func (e *Environment) SetEnvVars(env ...string) {
 
 // ImportDirectory copies a folder into the test environment.
 func (e *Environment) ImportDirectory(path string) {
-	err := fsutil.CopyFile(e.RootPath, path, nil)
+	err := fsutil.CopyFile(e.CWD, path, nil)
 	if err != nil {
 		e.T.Fatalf("error importing directory: %v", err)
 	}
@@ -168,6 +169,18 @@ func (e *Environment) RunCommand(cmd string, args ...string) (string, string) {
 		YarnInstallMutex.Lock()
 		defer YarnInstallMutex.Unlock()
 	}
+
+	if e.UseLocalPulumiBuild {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			e.Logf("Run Error: %v", err)
+			e.Fatalf("Ran command %v args %v and expected success. Instead got failure.", cmd, args)
+		}
+		if home != "" {
+			cmd = filepath.Join(home, ".pulumi-dev", "bin", "pulumi")
+		}
+	}
+
 	e.Helper()
 	stdout, stderr, err := e.GetCommandResults(cmd, args...)
 	if err != nil {

@@ -8,7 +8,11 @@ import (
 	"reflect"
 
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
+	"github.com/pulumi/pulumi/sdk/v3/go/pulumix"
+	"naming-collisions/example/internal"
 )
+
+var _ = internal.GetEnvOrDefault
 
 type Object struct {
 	Bar *string `pulumi:"bar"`
@@ -41,6 +45,12 @@ func (i ObjectArgs) ToObjectOutputWithContext(ctx context.Context) ObjectOutput 
 	return pulumi.ToOutputWithContext(ctx, i).(ObjectOutput)
 }
 
+func (i ObjectArgs) ToOutput(ctx context.Context) pulumix.Output[Object] {
+	return pulumix.Output[Object]{
+		OutputState: i.ToObjectOutputWithContext(ctx).OutputState,
+	}
+}
+
 type ObjectOutput struct{ *pulumi.OutputState }
 
 func (ObjectOutput) ElementType() reflect.Type {
@@ -53,6 +63,12 @@ func (o ObjectOutput) ToObjectOutput() ObjectOutput {
 
 func (o ObjectOutput) ToObjectOutputWithContext(ctx context.Context) ObjectOutput {
 	return o
+}
+
+func (o ObjectOutput) ToOutput(ctx context.Context) pulumix.Output[Object] {
+	return pulumix.Output[Object]{
+		OutputState: o.OutputState,
+	}
 }
 
 func (o ObjectOutput) Bar() pulumi.StringPtrOutput {
@@ -90,6 +106,12 @@ func (i ObjectInputTypeArgs) ToObjectInputTypeOutputWithContext(ctx context.Cont
 	return pulumi.ToOutputWithContext(ctx, i).(ObjectInputTypeOutput)
 }
 
+func (i ObjectInputTypeArgs) ToOutput(ctx context.Context) pulumix.Output[ObjectInputType] {
+	return pulumix.Output[ObjectInputType]{
+		OutputState: i.ToObjectInputTypeOutputWithContext(ctx).OutputState,
+	}
+}
+
 type ObjectInputTypeOutput struct{ *pulumi.OutputState }
 
 func (ObjectInputTypeOutput) ElementType() reflect.Type {
@@ -102,6 +124,12 @@ func (o ObjectInputTypeOutput) ToObjectInputTypeOutput() ObjectInputTypeOutput {
 
 func (o ObjectInputTypeOutput) ToObjectInputTypeOutputWithContext(ctx context.Context) ObjectInputTypeOutput {
 	return o
+}
+
+func (o ObjectInputTypeOutput) ToOutput(ctx context.Context) pulumix.Output[ObjectInputType] {
+	return pulumix.Output[ObjectInputType]{
+		OutputState: o.OutputState,
+	}
 }
 
 func (o ObjectInputTypeOutput) Bar() pulumi.StringPtrOutput {
@@ -139,6 +167,12 @@ func (i ResourceTypeArgs) ToResourceTypeOutputWithContext(ctx context.Context) R
 	return pulumi.ToOutputWithContext(ctx, i).(ResourceTypeOutput)
 }
 
+func (i ResourceTypeArgs) ToOutput(ctx context.Context) pulumix.Output[ResourceType] {
+	return pulumix.Output[ResourceType]{
+		OutputState: i.ToResourceTypeOutputWithContext(ctx).OutputState,
+	}
+}
+
 type ResourceTypeOutput struct{ *pulumi.OutputState }
 
 func (ResourceTypeOutput) ElementType() reflect.Type {
@@ -151,6 +185,12 @@ func (o ResourceTypeOutput) ToResourceTypeOutput() ResourceTypeOutput {
 
 func (o ResourceTypeOutput) ToResourceTypeOutputWithContext(ctx context.Context) ResourceTypeOutput {
 	return o
+}
+
+func (o ResourceTypeOutput) ToOutput(ctx context.Context) pulumix.Output[ResourceType] {
+	return pulumix.Output[ResourceType]{
+		OutputState: o.OutputState,
+	}
 }
 
 func (o ResourceTypeOutput) Name() pulumi.StringPtrOutput {

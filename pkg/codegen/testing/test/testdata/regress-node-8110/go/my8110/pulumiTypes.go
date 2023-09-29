@@ -8,7 +8,11 @@ import (
 	"reflect"
 
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
+	"github.com/pulumi/pulumi/sdk/v3/go/pulumix"
+	"regress-node-8110/my8110/internal"
 )
+
+var _ = internal.GetEnvOrDefault
 
 type MyObj struct {
 	A *string `pulumi:"a"`
@@ -41,6 +45,12 @@ func (i MyObjArgs) ToMyObjOutputWithContext(ctx context.Context) MyObjOutput {
 	return pulumi.ToOutputWithContext(ctx, i).(MyObjOutput)
 }
 
+func (i MyObjArgs) ToOutput(ctx context.Context) pulumix.Output[MyObj] {
+	return pulumix.Output[MyObj]{
+		OutputState: i.ToMyObjOutputWithContext(ctx).OutputState,
+	}
+}
+
 type MyObjOutput struct{ *pulumi.OutputState }
 
 func (MyObjOutput) ElementType() reflect.Type {
@@ -53,6 +63,12 @@ func (o MyObjOutput) ToMyObjOutput() MyObjOutput {
 
 func (o MyObjOutput) ToMyObjOutputWithContext(ctx context.Context) MyObjOutput {
 	return o
+}
+
+func (o MyObjOutput) ToOutput(ctx context.Context) pulumix.Output[MyObj] {
+	return pulumix.Output[MyObj]{
+		OutputState: o.OutputState,
+	}
 }
 
 func (o MyObjOutput) A() pulumi.StringPtrOutput {

@@ -8,6 +8,8 @@ import (
 	"reflect"
 
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
+	"github.com/pulumi/pulumi/sdk/v3/go/pulumix"
+	"simple-methods-schema-single-value-returns/example/internal"
 )
 
 type Foo struct {
@@ -21,6 +23,7 @@ func NewFoo(ctx *pulumi.Context,
 		args = &FooArgs{}
 	}
 
+	opts = internal.PkgResourceDefaultOpts(opts)
 	var resource Foo
 	err := ctx.RegisterRemoteComponentResource("example::Foo", name, args, &resource, opts...)
 	if err != nil {
@@ -96,6 +99,12 @@ func (i *Foo) ToFooOutputWithContext(ctx context.Context) FooOutput {
 	return pulumi.ToOutputWithContext(ctx, i).(FooOutput)
 }
 
+func (i *Foo) ToOutput(ctx context.Context) pulumix.Output[*Foo] {
+	return pulumix.Output[*Foo]{
+		OutputState: i.ToFooOutputWithContext(ctx).OutputState,
+	}
+}
+
 type FooOutput struct{ *pulumi.OutputState }
 
 func (FooOutput) ElementType() reflect.Type {
@@ -108,6 +117,12 @@ func (o FooOutput) ToFooOutput() FooOutput {
 
 func (o FooOutput) ToFooOutputWithContext(ctx context.Context) FooOutput {
 	return o
+}
+
+func (o FooOutput) ToOutput(ctx context.Context) pulumix.Output[*Foo] {
+	return pulumix.Output[*Foo]{
+		OutputState: o.OutputState,
+	}
 }
 
 func init() {

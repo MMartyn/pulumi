@@ -8,6 +8,8 @@ import (
 	"reflect"
 
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
+	"github.com/pulumi/pulumi/sdk/v3/go/pulumix"
+	"plain-object-defaults/example/internal"
 	"plain-object-defaults/example/mod1"
 )
 
@@ -28,6 +30,7 @@ func NewModuleTest(ctx *pulumi.Context,
 	if args.Val != nil {
 		args.Val = args.Val.ToTypPtrOutput().ApplyT(func(v *Typ) *Typ { return v.Defaults() }).(TypPtrOutput)
 	}
+	opts = internal.PkgResourceDefaultOpts(opts)
 	var resource ModuleTest
 	err := ctx.RegisterResource("example:index:moduleTest", name, args, &resource, opts...)
 	if err != nil {
@@ -93,6 +96,12 @@ func (i *ModuleTest) ToModuleTestOutputWithContext(ctx context.Context) ModuleTe
 	return pulumi.ToOutputWithContext(ctx, i).(ModuleTestOutput)
 }
 
+func (i *ModuleTest) ToOutput(ctx context.Context) pulumix.Output[*ModuleTest] {
+	return pulumix.Output[*ModuleTest]{
+		OutputState: i.ToModuleTestOutputWithContext(ctx).OutputState,
+	}
+}
+
 type ModuleTestOutput struct{ *pulumi.OutputState }
 
 func (ModuleTestOutput) ElementType() reflect.Type {
@@ -105,6 +114,12 @@ func (o ModuleTestOutput) ToModuleTestOutput() ModuleTestOutput {
 
 func (o ModuleTestOutput) ToModuleTestOutputWithContext(ctx context.Context) ModuleTestOutput {
 	return o
+}
+
+func (o ModuleTestOutput) ToOutput(ctx context.Context) pulumix.Output[*ModuleTest] {
+	return pulumix.Output[*ModuleTest]{
+		OutputState: o.OutputState,
+	}
 }
 
 func init() {

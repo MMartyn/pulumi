@@ -25,11 +25,11 @@ import (
 	surveycore "github.com/AlecAivazis/survey/v2/core"
 
 	"github.com/pulumi/pulumi/pkg/v3/backend/display"
+	sdkDisplay "github.com/pulumi/pulumi/pkg/v3/display"
 	"github.com/pulumi/pulumi/pkg/v3/engine"
 	"github.com/pulumi/pulumi/pkg/v3/resource/deploy"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/apitype"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/diag/colors"
-	sdkDisplay "github.com/pulumi/pulumi/sdk/v3/go/common/display"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/util/contract"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/util/result"
@@ -158,15 +158,15 @@ func PreviewThenPrompt(ctx context.Context, kind apitype.UpdateKind, stack Stack
 	}
 
 	// Otherwise, ensure the user wants to proceed.
-	res, plan = confirmBeforeUpdating(kind, stack, events, plan, op.Opts)
+	plan, err := confirmBeforeUpdating(kind, stack, events, plan, op.Opts)
 	close(eventsChannel)
-	return plan, changes, res
+	return plan, changes, result.WrapIfNonNil(err)
 }
 
 // confirmBeforeUpdating asks the user whether to proceed. A nil error means yes.
 func confirmBeforeUpdating(kind apitype.UpdateKind, stack Stack,
 	events []engine.Event, plan *deploy.Plan, opts UpdateOptions,
-) (result.Result, *deploy.Plan) {
+) (*deploy.Plan, error) {
 	for {
 		var response string
 
@@ -205,18 +205,17 @@ func confirmBeforeUpdating(kind apitype.UpdateKind, stack Stack,
 			Options: choices,
 			Default: string(no),
 		}, &response, surveyIcons); err != nil {
-			return result.FromError(fmt.Errorf("confirmation cancelled, not proceeding with the %s: %w", kind, err)), nil
+			return nil, fmt.Errorf("confirmation cancelled, not proceeding with the %s: %w", kind, err)
 		}
 
 		if response == string(no) {
-			fmt.Printf("confirmation declined, not proceeding with the %s\n", kind)
-			return result.Bail(), nil
+			return nil, result.FprintBailf(os.Stdout, "confirmation declined, not proceeding with the %s", kind)
 		}
 
 		if response == string(yes) {
 			// If we're in experimental mode always use the plan
 			if opts.Engine.Experimental {
-				return nil, plan
+				return plan, nil
 			}
 			return nil, nil
 		}
@@ -313,7 +312,7 @@ func createDiff(updateKind apitype.UpdateKind, events []engine.Event, displayOpt
 	seen := make(map[resource.URN]engine.StepEventMetadata)
 	displayOpts.SummaryDiff = true
 
-	outputEventsDiff := make([]string, 0)
+	var outputEventsDiff []string
 	for _, e := range events {
 		if e.Type == engine.SummaryEvent {
 			continue

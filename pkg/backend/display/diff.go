@@ -30,6 +30,7 @@ import (
 	"github.com/pulumi/pulumi/sdk/v3/go/common/diag"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/diag/colors"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource"
+	"github.com/pulumi/pulumi/sdk/v3/go/common/slice"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/util/cmdutil"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/util/contract"
 )
@@ -141,7 +142,7 @@ func renderStdoutColorEvent(payload engine.StdoutEventPayload, opts Options) str
 	return opts.Color.Colorize(payload.Message)
 }
 
-func renderSummaryEvent(event engine.SummaryEventPayload, wroteDiagnosticHeader bool, opts Options) string {
+func renderSummaryEvent(event engine.SummaryEventPayload, hasError bool, opts Options) string {
 	changes := event.ResourceChanges
 
 	out := &bytes.Buffer{}
@@ -149,7 +150,7 @@ func renderSummaryEvent(event engine.SummaryEventPayload, wroteDiagnosticHeader 
 	// If this is a failed preview, we only render the Policy Packs that ran. This is because rendering the summary
 	// for a failed preview may be surprising/misleading, as it does not describe the totality of the proposed changes
 	// (as the preview may have aborted when the error occurred).
-	if event.IsPreview && wroteDiagnosticHeader {
+	if event.IsPreview && hasError {
 		renderPolicyPacks(out, event.PolicyPacks, opts)
 		return out.String()
 	}
@@ -207,17 +208,17 @@ func renderSummaryEvent(event engine.SummaryEventPayload, wroteDiagnosticHeader 
 	}
 
 	if len(summaryPieces) > 0 {
-		fprintfIgnoreError(out, "    ")
+		fprintIgnoreError(out, "    ")
 
 		for i, piece := range summaryPieces {
 			if i > 0 {
-				fprintfIgnoreError(out, ". ")
+				fprintIgnoreError(out, ". ")
 			}
 
 			out.WriteString(opts.Color.Colorize(piece))
 		}
 
-		fprintfIgnoreError(out, "\n")
+		fprintIgnoreError(out, "\n")
 	}
 
 	// Print policy packs loaded. Data is rendered as a table of {policy-pack-name, version}.
@@ -274,7 +275,7 @@ func renderPreludeEvent(event engine.PreludeEventPayload, opts Options) string {
 	fprintIgnoreError(out, opts.Color.Colorize(
 		fmt.Sprintf("%sConfiguration:%s\n", colors.SpecUnimportant, colors.Reset)))
 
-	keys := make([]string, 0, len(event.Config))
+	keys := slice.Prealloc[string](len(event.Config))
 	for key := range event.Config {
 		keys = append(keys, key)
 	}
@@ -377,7 +378,7 @@ func renderDiffResourceOutputsEvent(
 			if text != "" {
 				header := fmt.Sprintf("%v%v--outputs:--%v\n",
 					deploy.Color(payload.Metadata.Op), getIndentationString(indent+1, payload.Metadata.Op, false), colors.Reset)
-				fprintfIgnoreError(out, opts.Color.Colorize(header))
+				fprintIgnoreError(out, opts.Color.Colorize(header))
 				fprintIgnoreError(out, opts.Color.Colorize(text))
 			}
 		}

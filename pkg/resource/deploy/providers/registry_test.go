@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 
 	"github.com/blang/semver"
@@ -91,10 +92,6 @@ func (host *testPluginHost) EnsurePlugins(plugins []workspace.PluginSpec, kinds 
 	return nil
 }
 
-func (host *testPluginHost) InstallPlugin(plugin workspace.PluginSpec) error {
-	return nil
-}
-
 func (host *testPluginHost) ResolvePlugin(
 	kind workspace.PluginKind, name string, version *semver.Version,
 ) (*workspace.PluginInfo, error) {
@@ -143,10 +140,10 @@ func (prov *testProvider) CheckConfig(urn resource.URN, olds,
 	return prov.checkConfig(urn, olds, news, allowUnknowns)
 }
 
-func (prov *testProvider) DiffConfig(urn resource.URN, olds, news resource.PropertyMap,
+func (prov *testProvider) DiffConfig(urn resource.URN, oldInputs, oldOutputs, newInputs resource.PropertyMap,
 	allowUnknowns bool, ignoreChanges []string,
 ) (plugin.DiffResult, error) {
-	return prov.diffConfig(urn, olds, news, allowUnknowns, ignoreChanges)
+	return prov.diffConfig(urn, oldOutputs, newInputs, allowUnknowns, ignoreChanges)
 }
 
 func (prov *testProvider) Configure(inputs resource.PropertyMap) error {
@@ -176,13 +173,13 @@ func (prov *testProvider) Read(urn resource.URN, id resource.ID,
 }
 
 func (prov *testProvider) Diff(urn resource.URN, id resource.ID,
-	olds resource.PropertyMap, news resource.PropertyMap, _ bool, _ []string,
+	oldInputs, oldOutputs, newInputs resource.PropertyMap, _ bool, _ []string,
 ) (plugin.DiffResult, error) {
 	return plugin.DiffResult{}, errors.New("unsupported")
 }
 
 func (prov *testProvider) Update(urn resource.URN, id resource.ID,
-	olds resource.PropertyMap, news resource.PropertyMap, timeout float64,
+	oldInputs, oldOutputs, newInputs resource.PropertyMap, timeout float64,
 	ignoreChanges []string, preview bool,
 ) (resource.PropertyMap, resource.Status, error) {
 	return nil, resource.StatusOK, errors.New("unsupported")
@@ -226,8 +223,12 @@ func (prov *testProvider) GetPluginInfo() (workspace.PluginInfo, error) {
 	}, nil
 }
 
-func (prov *testProvider) GetMapping(key string) ([]byte, string, error) {
+func (prov *testProvider) GetMapping(key, provider string) ([]byte, string, error) {
 	return nil, "", nil
+}
+
+func (prov *testProvider) GetMappings(key string) ([]string, error) {
+	return []string{}, nil
 }
 
 type providerLoader struct {
@@ -486,7 +487,7 @@ func TestCRUD(t *testing.T) {
 		assert.False(t, p.(*testProvider).configured)
 
 		// Diff
-		diff, err := r.Diff(urn, id, olds, news, false, nil)
+		diff, err := r.Diff(urn, id, nil, olds, news, false, nil)
 		assert.NoError(t, err)
 		assert.Equal(t, plugin.DiffResult{Changes: plugin.DiffNone}, diff)
 
@@ -496,7 +497,7 @@ func TestCRUD(t *testing.T) {
 		assert.Equal(t, old, p2)
 
 		// Update
-		outs, status, err := r.Update(urn, id, olds, inputs, timeout, nil, false)
+		outs, status, err := r.Update(urn, id, nil, olds, inputs, timeout, nil, false)
 		assert.NoError(t, err)
 		assert.Equal(t, resource.PropertyMap{}, outs)
 		assert.Equal(t, resource.StatusOK, status)
@@ -625,7 +626,7 @@ func TestCRUDPreview(t *testing.T) {
 		assert.False(t, p.(*testProvider).configured)
 
 		// Diff
-		diff, err := r.Diff(urn, id, olds, news, false, nil)
+		diff, err := r.Diff(urn, id, nil, olds, news, false, nil)
 		assert.NoError(t, err)
 		assert.Equal(t, plugin.DiffResult{Changes: plugin.DiffNone}, diff)
 
@@ -658,7 +659,7 @@ func TestCRUDPreview(t *testing.T) {
 		assert.False(t, p.(*testProvider).configured)
 
 		// Diff
-		diff, err := r.Diff(urn, id, olds, news, false, nil)
+		diff, err := r.Diff(urn, id, nil, olds, news, false, nil)
 		assert.NoError(t, err)
 		assert.True(t, diff.Replace())
 
@@ -805,4 +806,47 @@ func TestLoadProvider_missingError(t *testing.T) {
 	assert.ErrorContains(t, err,
 		fmt.Sprintf("install the plugin using `pulumi plugin install resource myplugin v1.2.3 --server %s`", srv.URL))
 	assert.Equal(t, 5, count)
+}
+
+func TestConcurrentRegistryUsage(t *testing.T) {
+	// Regression test for https://github.com/pulumi/pulumi/issues/13491, make sure we can use registry in
+	// parallel.
+
+	t.Parallel()
+
+	loaders := []*providerLoader{
+		newSimpleLoader(t, "pkgA", "1.0.0", nil),
+	}
+	host := newPluginHost(t, loaders)
+
+	r := NewRegistry(host, false, nil)
+	assert.NotNil(t, r)
+
+	// We're going to create a few thousand providers in parallel, registering a load of aliases for each of
+	// them.
+	var wg sync.WaitGroup
+	for i := 0; i < 1000; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+
+			typ := MakeProviderType("pkgA")
+			providerURN := resource.NewURN("test", "test", "", typ, tokens.QName(fmt.Sprintf("p%d", i)))
+
+			for j := 0; j < 1000; j++ {
+				aliasURN := resource.NewURN("test", "test", "", typ, tokens.QName(fmt.Sprintf("p%d_%d", i, j)))
+				r.RegisterAlias(providerURN, aliasURN)
+			}
+
+			// Now check that we can get the provider back.
+			olds, news := resource.PropertyMap{}, resource.PropertyMap{"version": resource.NewBoolProperty(true)}
+
+			// Check
+			inputs, failures, err := r.Check(providerURN, olds, news, false, nil)
+			assert.NoError(t, err)
+			assert.Len(t, failures, 1)
+			assert.Equal(t, "version", string(failures[0].Property))
+			assert.Nil(t, inputs)
+		}(i)
+	}
 }

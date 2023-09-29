@@ -7,7 +7,9 @@ import (
 	"context"
 	"reflect"
 
+	"dash-named-schema/foo/internal"
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
+	"github.com/pulumi/pulumi/sdk/v3/go/pulumix"
 )
 
 type FOOEncryptedBarClass struct {
@@ -21,6 +23,7 @@ func NewFOOEncryptedBarClass(ctx *pulumi.Context,
 		args = &FOOEncryptedBarClassArgs{}
 	}
 
+	opts = internal.PkgResourceDefaultOpts(opts)
 	var resource FOOEncryptedBarClass
 	err := ctx.RegisterResource("foo-bar:submodule1:FOOEncryptedBarClass", name, args, &resource, opts...)
 	if err != nil {
@@ -82,6 +85,12 @@ func (i *FOOEncryptedBarClass) ToFOOEncryptedBarClassOutputWithContext(ctx conte
 	return pulumi.ToOutputWithContext(ctx, i).(FOOEncryptedBarClassOutput)
 }
 
+func (i *FOOEncryptedBarClass) ToOutput(ctx context.Context) pulumix.Output[*FOOEncryptedBarClass] {
+	return pulumix.Output[*FOOEncryptedBarClass]{
+		OutputState: i.ToFOOEncryptedBarClassOutputWithContext(ctx).OutputState,
+	}
+}
+
 type FOOEncryptedBarClassOutput struct{ *pulumi.OutputState }
 
 func (FOOEncryptedBarClassOutput) ElementType() reflect.Type {
@@ -94,6 +103,12 @@ func (o FOOEncryptedBarClassOutput) ToFOOEncryptedBarClassOutput() FOOEncryptedB
 
 func (o FOOEncryptedBarClassOutput) ToFOOEncryptedBarClassOutputWithContext(ctx context.Context) FOOEncryptedBarClassOutput {
 	return o
+}
+
+func (o FOOEncryptedBarClassOutput) ToOutput(ctx context.Context) pulumix.Output[*FOOEncryptedBarClass] {
+	return pulumix.Output[*FOOEncryptedBarClass]{
+		OutputState: o.OutputState,
+	}
 }
 
 func init() {

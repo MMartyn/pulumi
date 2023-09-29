@@ -24,10 +24,10 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/pulumi/pulumi/pkg/v3/display"
 	resourceanalyzer "github.com/pulumi/pulumi/pkg/v3/resource/analyzer"
 	"github.com/pulumi/pulumi/pkg/v3/resource/deploy"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/diag"
-	"github.com/pulumi/pulumi/sdk/v3/go/common/display"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource/plugin"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/tokens"
@@ -114,17 +114,11 @@ type UpdateOptions struct {
 	// true if the plan should refresh before executing.
 	Refresh bool
 
-	// Specific resources to refresh during a refresh operation.
-	RefreshTargets deploy.UrnTargets
-
 	// Specific resources to replace during an update operation.
 	ReplaceTargets deploy.UrnTargets
 
-	// Specific resources to destroy during a destroy operation.
-	DestroyTargets deploy.UrnTargets
-
-	// Specific resources to update during an update operation.
-	UpdateTargets deploy.UrnTargets
+	// Specific resources to update during a deployment.
+	Targets deploy.UrnTargets
 
 	// true if we're allowing dependent targets to change, even if not specified in one of the above
 	// XXXTargets lists.
@@ -195,6 +189,8 @@ func Update(u UpdateInfo, ctx *Context, opts UpdateOptions, dryRun bool) (
 	logging.V(7).Infof("*** Starting Update(preview=%v) ***", dryRun)
 	defer logging.V(7).Infof("*** Update(preview=%v) complete ***", dryRun)
 
+	// We skip the target check here because the targeted resource may not exist yet.
+
 	return update(ctx, info, deploymentOptions{
 		UpdateOptions: opts,
 		SourceFunc:    newUpdateSource,
@@ -248,7 +244,7 @@ func installPlugins(
 	// Note that this is purely a best-effort thing. If we can't install missing plugins, just proceed; we'll fail later
 	// with an error message indicating exactly what plugins are missing. If `returnInstallErrors` is set, then return
 	// the error.
-	if err := ensurePluginsAreInstalled(plugctx.Request(), allPlugins.Deduplicate(),
+	if err := ensurePluginsAreInstalled(plugctx.Request(), plugctx.Diag, allPlugins.Deduplicate(),
 		plugctx.Host.GetProjectPlugins()); err != nil {
 		if returnInstallErrors {
 			return nil, nil, err
@@ -372,7 +368,7 @@ func installAndLoadPolicyPlugins(plugctx *plugin.Context, d diag.Sink, policies 
 }
 
 func newUpdateSource(
-	client deploy.BackendClient, opts deploymentOptions, proj *workspace.Project, pwd, main string,
+	client deploy.BackendClient, opts deploymentOptions, proj *workspace.Project, pwd, main, projectRoot string,
 	target *deploy.Target, plugctx *plugin.Context, dryRun bool,
 ) (deploy.Source, error) {
 	//
@@ -422,11 +418,12 @@ func newUpdateSource(
 
 	// If that succeeded, create a new source that will perform interpretation of the compiled program.
 	return deploy.NewEvalSource(plugctx, &deploy.EvalRunInfo{
-		Proj:    proj,
-		Pwd:     pwd,
-		Program: main,
-		Args:    args,
-		Target:  target,
+		Proj:        proj,
+		Pwd:         pwd,
+		Program:     main,
+		ProjectRoot: projectRoot,
+		Args:        args,
+		Target:      target,
 	}, defaultProviderVersions, dryRun), nil
 }
 
@@ -581,7 +578,8 @@ func (acts *updateActions) OnResourceStepPost(
 		// Also show outputs here for custom resources, since there might be some from the initial registration. We do
 		// not show outputs for component resources at this point: any that exist must be from a previous execution of
 		// the Pulumi program, as component resources only report outputs via calls to RegisterResourceOutputs.
-		if step.Res().Custom || acts.Opts.Refresh && step.Op() == deploy.OpRefresh {
+		// Deletions emit the resourceOutputEvent so the display knows when to stop the time elapsed counter.
+		if step.Res().Custom || acts.Opts.Refresh && step.Op() == deploy.OpRefresh || step.Op() == deploy.OpDelete {
 			acts.Opts.Events.resourceOutputsEvent(op, step, false /*planning*/, acts.Opts.Debug)
 		}
 	}

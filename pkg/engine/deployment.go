@@ -23,11 +23,11 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"google.golang.org/grpc"
 
+	"github.com/pulumi/pulumi/pkg/v3/display"
 	"github.com/pulumi/pulumi/pkg/v3/resource/deploy"
 	"github.com/pulumi/pulumi/pkg/v3/resource/deploy/providers"
 	interceptors "github.com/pulumi/pulumi/pkg/v3/util/rpcdebug"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/diag"
-	"github.com/pulumi/pulumi/sdk/v3/go/common/display"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/env"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource/config"
@@ -152,7 +152,7 @@ type deploymentOptions struct {
 
 // deploymentSourceFunc is a callback that will be used to prepare for, and evaluate, the "new" state for a stack.
 type deploymentSourceFunc func(
-	client deploy.BackendClient, opts deploymentOptions, proj *workspace.Project, pwd, main string,
+	client deploy.BackendClient, opts deploymentOptions, proj *workspace.Project, pwd, main, projectRoot string,
 	target *deploy.Target, plugctx *plugin.Context, dryRun bool) (deploy.Source, error)
 
 // newDeployment creates a new deployment with the given context and options.
@@ -186,7 +186,7 @@ func newDeployment(ctx *Context, info *deploymentContext, opts deploymentOptions
 	opts.trustDependencies = proj.TrustResourceDependencies()
 	// Now create the state source.  This may issue an error if it can't create the source.  This entails,
 	// for example, loading any plugins which will be required to execute a program, among other things.
-	source, err := opts.SourceFunc(ctx.BackendClient, opts, proj, pwd, main, target, plugctx, dryRun)
+	source, err := opts.SourceFunc(ctx.BackendClient, opts, proj, pwd, main, projinfo.Root, target, plugctx, dryRun)
 	if err != nil {
 		contract.IgnoreClose(plugctx)
 		return nil, err
@@ -219,6 +219,9 @@ func newDeployment(ctx *Context, info *deploymentContext, opts deploymentOptions
 				}
 				if imp.PluginDownloadURL == "" {
 					imp.PluginDownloadURL = defaultProviderInfo[imp.Type.Package()].PluginDownloadURL
+				}
+				if imp.PluginChecksums == nil {
+					imp.PluginChecksums = defaultProviderInfo[imp.Type.Package()].Checksums
 				}
 			}
 		}
@@ -286,10 +289,8 @@ func (deployment *deployment) run(cancelCtx *Context, actions runActions, policy
 			Parallel:                  deployment.Options.Parallel,
 			Refresh:                   deployment.Options.Refresh,
 			RefreshOnly:               deployment.Options.isRefresh,
-			RefreshTargets:            deployment.Options.RefreshTargets,
 			ReplaceTargets:            deployment.Options.ReplaceTargets,
-			DestroyTargets:            deployment.Options.DestroyTargets,
-			UpdateTargets:             deployment.Options.UpdateTargets,
+			Targets:                   deployment.Options.Targets,
 			TargetDependents:          deployment.Options.TargetDependents,
 			TrustDependencies:         deployment.Options.trustDependencies,
 			UseLegacyDiff:             deployment.Options.UseLegacyDiff,
@@ -342,4 +343,23 @@ func assertSeen(seen map[resource.URN]deploy.Step, step deploy.Step) {
 
 func isDefaultProviderStep(step deploy.Step) bool {
 	return providers.IsDefaultProvider(step.URN())
+}
+
+func checkTargets(targetUrns deploy.UrnTargets, snap *deploy.Snapshot) error {
+	if !targetUrns.IsConstrained() {
+		return nil
+	}
+	if snap == nil {
+		return fmt.Errorf("targets specified, but snapshot was nil")
+	}
+	urns := map[resource.URN]struct{}{}
+	for _, res := range snap.Resources {
+		urns[res.URN] = struct{}{}
+	}
+	for _, target := range targetUrns.Literals() {
+		if _, ok := urns[target]; !ok {
+			return fmt.Errorf("no resource named '%s' found", target)
+		}
+	}
+	return nil
 }

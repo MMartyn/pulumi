@@ -41,6 +41,7 @@ import (
 	"github.com/cheggaaa/pb"
 	"github.com/djherbis/times"
 
+	"github.com/pulumi/pulumi/sdk/v3/go/common/diag"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/diag/colors"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/env"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/util/archive"
@@ -197,12 +198,6 @@ func (source *getPulumiSource) Download(
 	getHTTPResponse func(*http.Request) (io.ReadCloser, int64, error),
 ) (io.ReadCloser, int64, error) {
 	serverURL := "https://get.pulumi.com/releases/plugins"
-
-	logging.V(1).Infof("%s downloading from %s", source.name, serverURL)
-
-	serverURL = interpolateURL(serverURL, version, opSy, arch)
-	serverURL = strings.TrimSuffix(serverURL, "/")
-
 	logging.V(1).Infof("%s downloading from %s", source.name, serverURL)
 	endpoint := fmt.Sprintf("%s/%s",
 		serverURL,
@@ -543,6 +538,15 @@ func (source *httpSource) GetLatestVersion(
 	return nil, errors.New("GetLatestVersion is not supported for plugins from http sources")
 }
 
+func interpolateURL(serverURL string, version semver.Version, os, arch string) string {
+	// Expectation is the URL is already encoded, so we need to encode the {}'s in the replacement strings.
+	replacer := strings.NewReplacer(
+		"$%7BVERSION%7D", url.QueryEscape(version.String()),
+		"$%7BOS%7D", url.QueryEscape(os),
+		"$%7BARCH%7D", url.QueryEscape(arch))
+	return replacer.Replace(serverURL)
+}
+
 func (source *httpSource) Download(
 	version semver.Version, opSy string, arch string,
 	getHTTPResponse func(*http.Request) (io.ReadCloser, int64, error),
@@ -679,10 +683,14 @@ func (source *checksumSource) Download(
 	version semver.Version, opSy string, arch string,
 	getHTTPResponse func(*http.Request) (io.ReadCloser, int64, error),
 ) (io.ReadCloser, int64, error) {
-	checksum := source.checksum[fmt.Sprintf("%s-%s", opSy, arch)]
+	checksum, ok := source.checksum[fmt.Sprintf("%s-%s", opSy, arch)]
 	response, length, err := source.source.Download(version, opSy, arch, getHTTPResponse)
 	if err != nil {
 		return nil, -1, err
+	}
+	// If there's no checksum for this platform then skip validation.
+	if !ok {
+		return response, length, nil
 	}
 
 	return &checksumReader{
@@ -857,14 +865,6 @@ func (info *PluginInfo) SetFileMetadata(path string) error {
 	}
 
 	return nil
-}
-
-func interpolateURL(serverURL string, version semver.Version, os, arch string) string {
-	replacer := strings.NewReplacer(
-		"${VERSION}", url.QueryEscape(version.String()),
-		"${OS}", url.QueryEscape(os),
-		"${ARCH}", url.QueryEscape(arch))
-	return replacer.Replace(serverURL)
 }
 
 func (spec PluginSpec) GetSource() (PluginSource, error) {
@@ -1164,6 +1164,7 @@ func (d *pluginDownloader) tryDownloadToFile(pkgPlugin PluginSpec) (string, erro
 		return "", nil, err
 	}
 	readErr, writeErr := d.tryDownload(pkgPlugin, file)
+	logging.V(10).Infof("try downloaded plugin %s to %s: %v %v", pkgPlugin, file.Name(), readErr, writeErr)
 	if readErr != nil || writeErr != nil {
 		err2 := os.Remove(file.Name())
 		if err2 != nil {
@@ -1554,10 +1555,12 @@ func HasPluginGTE(spec PluginSpec) (bool, error) {
 	}
 
 	for _, p := range plugs {
-		if p.Name == spec.Name &&
-			p.Kind == spec.Kind &&
-			(p.Version != nil && spec.Version != nil && p.Version.GTE(*spec.Version)) {
-			return true, nil
+		if p.Name == spec.Name && p.Kind == spec.Kind {
+			if spec.Version == nil {
+				return true, nil
+			} else if p.Version != nil && p.Version.GTE(*spec.Version) {
+				return true, nil
+			}
 		}
 	}
 	return false, nil
@@ -1661,14 +1664,29 @@ func getPlugins(dir string, skipMetadata bool) ([]PluginInfo, error) {
 	return plugins, nil
 }
 
+// We currently bundle some plugins with "pulumi" and thus expect them to be next to the pulumi binary.
+// Eventually we want to fix this so new plugins are true plugins in the plugin cache.
+func IsPluginBundled(kind PluginKind, name string) bool {
+	return (kind == LanguagePlugin && name == "nodejs") ||
+		(kind == LanguagePlugin && name == "go") ||
+		(kind == LanguagePlugin && name == "python") ||
+		(kind == LanguagePlugin && name == "dotnet") ||
+		(kind == LanguagePlugin && name == "yaml") ||
+		(kind == LanguagePlugin && name == "java") ||
+		(kind == ResourcePlugin && name == "pulumi-nodejs") ||
+		(kind == ResourcePlugin && name == "pulumi-python") ||
+		(kind == AnalyzerPlugin && name == "policy") ||
+		(kind == AnalyzerPlugin && name == "policy-python")
+}
+
 // GetPluginPath finds a plugin's path by its kind, name, and optional version.  It will match the latest version that
 // is >= the version specified.  If no version is supplied, the latest plugin for that given kind/name pair is loaded,
 // using standard semver sorting rules.  A plugin may be overridden entirely by placing it on your $PATH, though it is
 // possible to opt out of this behavior by setting PULUMI_IGNORE_AMBIENT_PLUGINS to any non-empty value.
-func GetPluginPath(kind PluginKind, name string, version *semver.Version,
+func GetPluginPath(d diag.Sink, kind PluginKind, name string, version *semver.Version,
 	projectPlugins []ProjectPlugin,
 ) (string, error) {
-	info, path, err := getPluginInfoAndPath(kind, name, version, true /* skipMetadata */, projectPlugins)
+	info, path, err := getPluginInfoAndPath(d, kind, name, version, true /* skipMetadata */, projectPlugins)
 	if err != nil {
 		return "", err
 	}
@@ -1678,10 +1696,10 @@ func GetPluginPath(kind PluginKind, name string, version *semver.Version,
 	return path, err
 }
 
-func GetPluginInfo(kind PluginKind, name string, version *semver.Version,
+func GetPluginInfo(d diag.Sink, kind PluginKind, name string, version *semver.Version,
 	projectPlugins []ProjectPlugin,
 ) (*PluginInfo, error) {
-	info, path, err := getPluginInfoAndPath(kind, name, version, false, projectPlugins)
+	info, path, err := getPluginInfoAndPath(d, kind, name, version, false, projectPlugins)
 	if err != nil {
 		return nil, err
 	}
@@ -1713,10 +1731,11 @@ func getPluginPath(info *PluginInfo) string {
 //   - if found in the pulumi dir's installed plugins, a PluginInfo and path to the executable
 //   - an error in all other cases.
 func getPluginInfoAndPath(
+	d diag.Sink,
 	kind PluginKind, name string, version *semver.Version, skipMetadata bool,
 	projectPlugins []ProjectPlugin,
 ) (*PluginInfo, string, error) {
-	var filename string
+	filename := (&PluginSpec{Kind: kind, Name: name}).File()
 
 	for i, p1 := range projectPlugins {
 		for j, p2 := range projectPlugins {
@@ -1765,38 +1784,26 @@ func getPluginInfoAndPath(
 		return info, path, nil
 	}
 
-	// We currently bundle some plugins with "pulumi" and thus expect them to be next to the pulumi binary. We
-	// also always allow these plugins to be picked up from PATH even if PULUMI_IGNORE_AMBIENT_PLUGINS is set.
-	// Eventually we want to fix this so new plugins are true plugins in the plugin cache.
-	isBundled := kind == LanguagePlugin ||
-		(kind == ResourcePlugin && name == "pulumi-nodejs") ||
-		(kind == ResourcePlugin && name == "pulumi-python") ||
-		(kind == AnalyzerPlugin && name == "policy") ||
-		(kind == AnalyzerPlugin && name == "policy-python")
-
 	// If we have a version of the plugin on its $PATH, use it, unless we have opted out of this behavior explicitly.
 	// This supports development scenarios.
-	includeAmbient := !(env.IgnoreAmbientPlugins.Value()) || isBundled
+	includeAmbient := !(env.IgnoreAmbientPlugins.Value())
+	var ambientPath string
 	if includeAmbient {
-		filename = (&PluginSpec{Kind: kind, Name: name}).File()
 		if path, err := exec.LookPath(filename); err == nil {
+			ambientPath = path
 			logging.V(6).Infof("GetPluginPath(%s, %s, %v): found on $PATH %s", kind, name, version, path)
-			return &PluginInfo{
-				Kind: kind,
-				Name: name,
-				Path: filepath.Dir(path),
-			}, path, nil
 		}
 	}
 
 	// At some point in the future, bundled plugins will be located in the plugin cache, just like regular
 	// plugins (see pulumi/pulumi#956 for some of the reasons why this isn't the case today). For now, they
 	// ship next to the `pulumi` binary. While we encourage this folder to be on the $PATH (and so the check
-	// above would have found the plugin) it's possible someone is running `pulumi` with an explicit path on
-	// the command line or has done symlink magic such that `pulumi` is on the path, but the bundled plugins
-	// are not. So, if possible, look next to the instance of `pulumi` that is running to find this bundled
-	// plugin.
-	if isBundled {
+	// above would have normally found the plugin) it's possible someone is running `pulumi` with an explicit
+	// path on the command line or has done symlink magic such that `pulumi` is on the path, but the bundled
+	// plugins are not, or has simply set IGNORE_AMBIENT_PLUGINS. So, if possible, look next to the instance
+	// of `pulumi` that is running to find this bundled plugin.
+	var bundledPath string
+	if IsPluginBundled(kind, name) {
 		exePath, exeErr := os.Executable()
 		if exeErr == nil {
 			fullPath, fullErr := filepath.EvalSymlinks(exePath)
@@ -1809,19 +1816,42 @@ func getPluginInfoAndPath(
 						(stat.Mode()&0o100 != 0 || runtime.GOOS == windowsGOOS) {
 						logging.V(6).Infof("GetPluginPath(%s, %s, %v): found next to current executable %s",
 							kind, name, version, candidate)
-
-						return &PluginInfo{
-							Kind: kind,
-							Name: name,
-							Path: filepath.Dir(candidate),
-						}, candidate, nil
+						bundledPath = candidate
+						break
 					}
 				}
 			}
 		}
 	}
 
-	// Otherwise, check the plugin cache.
+	// We prefer the ambient path, but we need to check if this is the same as the bundled
+	// path to decide if we're warning or not.
+	pluginPath := bundledPath
+	if ambientPath != "" {
+		if ambientPath != bundledPath {
+			// They don't match _but_ it might be they just don't match because the pulumi install is symlinked,
+			// e.g. /opt/homebrew/bin/pulumi-language-nodejs -> /opt/homebrew/Cellar/pulumi/3.77.0/bin/pulumi-language-nodejs
+			// So before we warn, lets just check if we can resolve symlinks in the ambient path and then check again.
+			fullAmbientPath, err := filepath.EvalSymlinks(ambientPath)
+			// N.B, that we don't _return_ the resolved path, we return the original path. Also if resolving
+			// hits any errors then we just skip this warning, better to not warn than to error in a new way.
+			if err == nil {
+				if fullAmbientPath != bundledPath {
+					d.Warningf(diag.Message("", "using %s from $PATH at %s"), filename, ambientPath)
+				}
+			}
+		}
+		pluginPath = ambientPath
+	}
+	if pluginPath != "" {
+		return &PluginInfo{
+			Kind: kind,
+			Name: name,
+			Path: filepath.Dir(pluginPath),
+		}, pluginPath, nil
+	}
+
+	// Wasn't ambient, and wasn't bundled, so now check the plugin cache.
 	var plugins []PluginInfo
 	var err error
 	if skipMetadata {

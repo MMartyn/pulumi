@@ -245,12 +245,6 @@ type ProgramTestOptions struct {
 	// file.
 	Tracing string
 
-	// If non-empty, specifies the value of the `--test.coverprofile` flag to pass to the Pulumi CLI. As with the
-	// Tracing field, the `{command}` template will expand to the current command name.
-	//
-	// If PULUMI_TEST_COVERAGE_PATH is set, this defaults to $PULUMI_TEST_COVERAGE_PATH/{command}-[random suffix].out
-	CoverProfile string
-
 	// NoParallel will opt the test out of being ran in parallel.
 	NoParallel bool
 
@@ -546,9 +540,6 @@ func (opts ProgramTestOptions) With(overrides ProgramTestOptions) ProgramTestOpt
 	if overrides.Tracing != "" {
 		opts.Tracing = overrides.Tracing
 	}
-	if overrides.CoverProfile != "" {
-		opts.CoverProfile = overrides.CoverProfile
-	}
 	if overrides.NoParallel {
 		opts.NoParallel = overrides.NoParallel
 	}
@@ -702,7 +693,7 @@ func prepareProgram(t *testing.T, opts *ProgramTestOptions) {
 
 	// Disable stack backups for tests to avoid filling up ~/.pulumi/backups with unnecessary
 	// backups of test stacks.
-	opts.Env = append(opts.Env, fmt.Sprintf("%s=1", filestate.DisableCheckpointBackupsEnvVar))
+	opts.Env = append(opts.Env, fmt.Sprintf("%s=1", filestate.PulumiFilestateDisableCheckpointBackups))
 
 	// We want tests to default into being ran in parallel, hence the odd double negative.
 	if !opts.NoParallel && !opts.DestroyOnCleanup {
@@ -746,16 +737,6 @@ func prepareProgram(t *testing.T, opts *ProgramTestOptions) {
 
 	if opts.Tracing == "" {
 		opts.Tracing = os.Getenv("PULUMI_TEST_TRACE_ENDPOINT")
-	}
-
-	if opts.CoverProfile == "" {
-		if cov := os.Getenv("PULUMI_TEST_COVERAGE_PATH"); cov != "" {
-			var b [4]byte
-			if _, err := cryptorand.Read(b[:]); err != nil {
-				t.Errorf("could not read random bytes: %v", err)
-			}
-			opts.CoverProfile = filepath.Join(cov, "{command}-"+hex.EncodeToString(b[:])+".cov")
-		}
 	}
 
 	if opts.UseSharedVirtualEnv == nil {
@@ -922,9 +903,6 @@ func (pt *ProgramTester) pulumiCmd(name string, args []string) ([]string, error)
 	if tracing := pt.opts.Tracing; tracing != "" {
 		cmd = append(cmd, "--tracing", strings.ReplaceAll(tracing, "{command}", name))
 	}
-	if cov := pt.opts.CoverProfile; cov != "" {
-		cmd = append(cmd, "--test.coverprofile", strings.ReplaceAll(cov, "{command}", name))
-	}
 	return cmd, nil
 }
 
@@ -960,6 +938,17 @@ func (pt *ProgramTester) pipenvCmd(args []string) ([]string, error) {
 
 func (pt *ProgramTester) runCommand(name string, args []string, wd string) error {
 	return RunCommand(pt.t, name, args, wd, pt.opts)
+}
+
+// RunPulumiCommand runs a Pulumi command in the project directory.
+// For example:
+//
+//	pt.RunPulumiCommand("preview", "--stack", "dev")
+func (pt *ProgramTester) RunPulumiCommand(name string, args ...string) error {
+	// pt.runPulumiCommand uses 'name' for logging only.
+	// We want it to be part of the actual command.
+	args = append([]string{name}, args...)
+	return pt.runPulumiCommand(name, args, pt.projdir, false /* expectFailure */)
 }
 
 func (pt *ProgramTester) runPulumiCommand(name string, args []string, wd string, expectFailure bool) error {

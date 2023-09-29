@@ -16,13 +16,14 @@ package backend
 
 import (
 	"context"
+	"strings"
 
+	sdkDisplay "github.com/pulumi/pulumi/pkg/v3/display"
 	"github.com/pulumi/pulumi/pkg/v3/operations"
 	"github.com/pulumi/pulumi/pkg/v3/resource/deploy"
 	"github.com/pulumi/pulumi/pkg/v3/secrets"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/apitype"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/diag"
-	sdkDisplay "github.com/pulumi/pulumi/sdk/v3/go/common/display"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource/config"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/tokens"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/util/result"
@@ -42,7 +43,7 @@ type MockBackend struct {
 	SupportsOrganizationsF func() bool
 	ParseStackReferenceF   func(s string) (StackReference, error)
 	ValidateStackNameF     func(s string) error
-	DoesProjectExistF      func(context.Context, string) (bool, error)
+	DoesProjectExistF      func(context.Context, string, string) (bool, error)
 	GetStackF              func(context.Context, StackReference) (Stack, error)
 	CreateStackF           func(context.Context, StackReference, string, *CreateStackOptions) (Stack, error)
 	RemoveStackF           func(context.Context, Stack, bool) (bool, error)
@@ -50,15 +51,13 @@ type MockBackend struct {
 		[]StackSummary, ContinuationToken, error)
 	RenameStackF            func(context.Context, Stack, tokens.QName) (StackReference, error)
 	GetStackCrypterF        func(StackReference) (config.Crypter, error)
-	QueryF                  func(context.Context, QueryOperation) result.Result
+	QueryF                  func(context.Context, QueryOperation) error
 	GetLatestConfigurationF func(context.Context, Stack) (config.Map, error)
 	GetHistoryF             func(context.Context, StackReference, int, int) ([]UpdateInfo, error)
 	UpdateStackTagsF        func(context.Context, Stack, map[apitype.StackTagName]string) error
 	ExportDeploymentF       func(context.Context, Stack) (*apitype.UntypedDeployment, error)
 	ImportDeploymentF       func(context.Context, Stack, *apitype.UntypedDeployment) error
-	LogoutF                 func() error
-	LogoutAllF              func() error
-	CurrentUserF            func() (string, []string, error)
+	CurrentUserF            func() (string, []string, *workspace.TokenInformation, error)
 	PreviewF                func(context.Context, Stack,
 		UpdateOperation) (*deploy.Plan, sdkDisplay.ResourceChanges, result.Result)
 	UpdateF func(context.Context, Stack,
@@ -139,7 +138,28 @@ func (be *MockBackend) ParseStackReference(s string) (StackReference, error) {
 	if be.ParseStackReferenceF != nil {
 		return be.ParseStackReferenceF(s)
 	}
-	panic("not implemented")
+
+	// default implementation
+	split := strings.Split(s, "/")
+	var project, name tokens.Name
+	switch len(split) {
+	case 1:
+		name = tokens.Name(split[0])
+	case 2:
+		project = tokens.Name(split[0])
+		name = tokens.Name(split[1])
+	case 3:
+		// org is unused
+		project = tokens.Name(split[1])
+		name = tokens.Name(split[2])
+	}
+
+	return &MockStackReference{
+		StringV:             s,
+		NameV:               name,
+		ProjectV:            project,
+		FullyQualifiedNameV: tokens.QName(s),
+	}, nil
 }
 
 func (be *MockBackend) ValidateStackName(s string) error {
@@ -149,9 +169,9 @@ func (be *MockBackend) ValidateStackName(s string) error {
 	panic("not implemented")
 }
 
-func (be *MockBackend) DoesProjectExist(ctx context.Context, projectName string) (bool, error) {
+func (be *MockBackend) DoesProjectExist(ctx context.Context, orgName string, projectName string) (bool, error) {
 	if be.DoesProjectExistF != nil {
-		return be.DoesProjectExistF(ctx, projectName)
+		return be.DoesProjectExistF(ctx, orgName, projectName)
 	}
 	panic("not implemented")
 }
@@ -258,7 +278,7 @@ func (be *MockBackend) Watch(ctx context.Context, stack Stack,
 	panic("not implemented")
 }
 
-func (be *MockBackend) Query(ctx context.Context, op QueryOperation) result.Result {
+func (be *MockBackend) Query(ctx context.Context, op QueryOperation) error {
 	if be.QueryF != nil {
 		return be.QueryF(ctx, op)
 	}
@@ -322,23 +342,10 @@ func (be *MockBackend) ImportDeployment(ctx context.Context, stack Stack,
 	panic("not implemented")
 }
 
-func (be *MockBackend) Logout() error {
-	if be.LogoutF != nil {
-		return be.LogoutF()
-	}
-	panic("not implemented")
-}
-
-func (be *MockBackend) LogoutAll() error {
-	if be.LogoutAllF != nil {
-		return be.LogoutAllF()
-	}
-	panic("not implemented")
-}
-
-func (be *MockBackend) CurrentUser() (string, []string, error) {
+func (be *MockBackend) CurrentUser() (string, []string, *workspace.TokenInformation, error) {
 	if be.CurrentUserF != nil {
-		return be.CurrentUserF()
+		user, org, tokenInfo, err := be.CurrentUserF()
+		return user, org, tokenInfo, err
 	}
 	panic("not implemented")
 }

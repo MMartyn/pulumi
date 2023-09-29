@@ -196,12 +196,18 @@ func newDestroyCmd() *cobra.Command {
 			}
 
 			// Use the current snapshot secrets manager, if there is one, as the fallback secrets manager.
-			var sm secrets.Manager
+			var defaultSecretsManager secrets.Manager
 			if snap != nil {
-				sm = snap.SecretsManager
+				defaultSecretsManager = snap.SecretsManager
 			}
 
-			cfg, sm, err := getStackConfiguration(ctx, s, proj, sm)
+			getConfig := getStackConfiguration
+			if stackName != "" {
+				// `pulumi destroy --stack <stack>` can be run outside of the project directory.
+				// The config may be missing, fallback on the latest configuration in the backend.
+				getConfig = getStackConfigurationOrLatest
+			}
+			cfg, sm, err := getConfig(ctx, s, proj, defaultSecretsManager)
 			if err != nil {
 				return result.FromError(fmt.Errorf("getting stack configuration: %w", err))
 			}
@@ -249,7 +255,7 @@ func newDestroyCmd() *cobra.Command {
 				Parallel:                  parallel,
 				Debug:                     debug,
 				Refresh:                   refreshOption,
-				DestroyTargets:            deploy.NewUrnTargets(targetUrns),
+				Targets:                   deploy.NewUrnTargets(targetUrns),
 				TargetDependents:          targetDependents,
 				UseLegacyDiff:             useLegacyDiff(),
 				DisableProviderPreview:    disableProviderPreview(),

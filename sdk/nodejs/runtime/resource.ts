@@ -34,7 +34,7 @@ import {
     ResourceOptions,
     URN,
 } from "../resource";
-import { debuggablePromise } from "./debuggable";
+import { debuggablePromise, debugPromiseLeaks } from "./debuggable";
 import { monitorSupportsDeletedWith } from "./settings";
 import { invoke } from "./invoke";
 
@@ -60,10 +60,29 @@ import {
     serialize,
     terminateRpcs,
 } from "./settings";
+import { isGrpcError } from "../errors";
 
 const gstruct = require("google-protobuf/google/protobuf/struct_pb.js");
 const resproto = require("../proto/resource_pb.js");
 const aliasproto = require("../proto/alias_pb.js");
+const sourceproto = require("../proto/source_pb.js");
+
+export interface SourcePosition {
+    uri: string;
+    line: number;
+    column: number;
+}
+
+function marshalSourcePosition(sourcePosition?: SourcePosition) {
+    if (sourcePosition === undefined) {
+        return undefined;
+    }
+    const pos = new sourceproto.SourcePosition();
+    pos.setUri(sourcePosition.uri);
+    pos.setLine(sourcePosition.line);
+    pos.setColumn(sourcePosition.column);
+    return pos;
+}
 
 interface ResourceResolverOperation {
     // A resolver for a resource's URN.
@@ -223,6 +242,7 @@ export function readResource(
     name: string,
     props: Inputs,
     opts: ResourceOptions,
+    sourcePosition?: SourcePosition,
 ): void {
     const id: Input<ID> | undefined = opts.id;
     if (!id) {
@@ -258,6 +278,7 @@ export function readResource(
             req.setAcceptsecrets(true);
             req.setAcceptresources(!utils.disableResourceReferences);
             req.setAdditionalsecretoutputsList((<any>opts).additionalSecretOutputs || []);
+            req.setSourceposition(marshalSourcePosition(sourcePosition));
 
             // Now run the operation, serializing the invocation if necessary.
             const opLabel = `monitor.readResource(${label})`;
@@ -341,17 +362,27 @@ function mapAliasesForRequest(aliases: (URN | Alias)[] | undefined, parentURN?: 
                 newAlias.setUrn(a);
             } else {
                 const newAliasSpec = new aliasproto.Alias.Spec();
-                const noParent = !a.hasOwnProperty("parent") && !parentURN;
                 newAliasSpec.setName(a.name);
                 newAliasSpec.setType(a.type);
                 newAliasSpec.setStack(a.stack);
                 newAliasSpec.setProject(a.project);
-                if (noParent) {
-                    newAliasSpec.setNoparent(noParent);
-                } else {
-                    const aliasParentUrn = a.hasOwnProperty("parent") ? getParentURN(a.parent) : output(parentURN);
-                    const urn = await aliasParentUrn.promise();
-                    newAliasSpec.setParenturn(urn);
+                if (a.hasOwnProperty("parent")) {
+                    if (a.parent === undefined) {
+                        newAliasSpec.setNoparent(true);
+                    } else {
+                        const aliasParentUrn = getParentURN(a.parent);
+                        const urn = await aliasParentUrn.promise();
+                        newAliasSpec.setParenturn(urn);
+                    }
+                } else if (parentURN) {
+                    // If a parent isn't specified for the alias and the resource has a parent,
+                    // pass along the resource's parent in the alias spec.
+                    // It shouldn't be necessary to do this because the engine should fill-in the
+                    // resource's parent if one wasn't specified for the alias.
+                    // However, some older versions of the CLI don't do this correctly, and this
+                    // SDK has always passed along the parent in this way, so we continue doing it
+                    // to maintain compatibility with these versions of the CLI.
+                    newAliasSpec.setParenturn(parentURN);
                 }
                 newAlias.setSpec(newAliasSpec);
             }
@@ -375,6 +406,7 @@ export function registerResource(
     newDependency: (urn: URN) => Resource,
     props: Inputs,
     opts: ResourceOptions,
+    sourcePosition?: SourcePosition,
 ): void {
     const label = `resource:${name}[${t}]`;
     log.debug(`Registering resource: t=${t}, name=${name}, custom=${custom}, remote=${remote}`);
@@ -423,6 +455,8 @@ export function registerResource(
             req.setPlugindownloadurl(opts.pluginDownloadURL || "");
             req.setRetainondelete(opts.retainOnDelete || false);
             req.setDeletedwith(resop.deletedWithURN || "");
+            req.setAliasspecs(true);
+            req.setSourceposition(marshalSourcePosition(sourcePosition));
 
             if (resop.deletedWithURN && !(await monitorSupportsDeletedWith())) {
                 throw new Error(
@@ -540,11 +574,11 @@ export function registerResource(
     );
 }
 
-/**
+/** @internal
  * Prepares for an RPC that will manufacture a resource, and hence deals with input and output
  * properties.
  */
-async function prepareResource(
+export async function prepareResource(
     label: string,
     res: Resource,
     parent: Resource | undefined,
@@ -593,6 +627,12 @@ async function prepareResource(
 
             resolveURN = (v, err) => {
                 if (err) {
+                    if (isGrpcError(err)) {
+                        if (debugPromiseLeaks) {
+                            console.error("info: skipped rejection in resolveURN");
+                        }
+                        return;
+                    }
                     rejectValue(err);
                     rejectIsKnown(err);
                 } else {
@@ -632,6 +672,12 @@ async function prepareResource(
 
             resolveID = (v, isKnown, err) => {
                 if (err) {
+                    if (isGrpcError(err)) {
+                        if (debugPromiseLeaks) {
+                            console.error("info: skipped rejection in resolveID");
+                        }
+                        return;
+                    }
                     rejectValue(err);
                     rejectIsKnown(err);
                 } else {
@@ -664,11 +710,26 @@ async function prepareResource(
         // If no parent was provided, parent to the root resource.
         const parentURN = parent ? await parent.urn.promise() : undefined;
 
-        let providerRef: string | undefined;
         let importID: ID | undefined;
         if (custom) {
             const customOpts = <CustomResourceOptions>opts;
             importID = customOpts.import;
+        }
+
+        let providerRef: string | undefined;
+        let sendProvider = custom;
+        if (remote && opts.provider) {
+            // If it's a remote component and a provider was specified, only
+            // send the provider in the request if the provider's package is
+            // the same as the component's package. Otherwise, don't send it
+            // because the user specified `provider: someProvider` as shorthand
+            // for `providers: [someProvider]`.
+            const pkg = pkgFromType(type!);
+            if (pkg && pkg === opts.provider.getPackage()) {
+                sendProvider = true;
+            }
+        }
+        if (sendProvider) {
             providerRef = await ProviderResource.register(opts.provider);
         }
 
@@ -1089,4 +1150,16 @@ function runAsyncResourceOp(label: string, callback: () => Promise<void>, serial
             log.debug(`Resource RPC serialization requested: ${label} is behind ${resourceChainLabel}`);
         }
     }
+}
+
+/**
+ * Extract the pkg from the type token of the form "pkg:module:member".
+ * @internal
+ */
+export function pkgFromType(type: string): string | undefined {
+    const parts = type.split(":");
+    if (parts.length === 3) {
+        return parts[0];
+    }
+    return undefined;
 }

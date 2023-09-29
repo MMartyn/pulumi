@@ -8,6 +8,8 @@ import (
 	"reflect"
 
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
+	"github.com/pulumi/pulumi/sdk/v3/go/pulumix"
+	"regress-go-12971/example/internal"
 )
 
 type Provider struct {
@@ -22,20 +24,21 @@ func NewProvider(ctx *pulumi.Context,
 	}
 
 	if args.Name == nil {
-		if d := getEnvOrDefault(nil, nil, "WORLD_NAME"); d != nil {
+		if d := internal.GetEnvOrDefault(nil, nil, "WORLD_NAME"); d != nil {
 			args.Name = pulumi.StringPtr(d.(string))
 		}
 	}
 	if args.Populated == nil {
-		if d := getEnvOrDefault(nil, parseEnvBool, "WORLD_POPULATED"); d != nil {
+		if d := internal.GetEnvOrDefault(nil, internal.ParseEnvBool, "WORLD_POPULATED"); d != nil {
 			args.Populated = pulumi.BoolPtr(d.(bool))
 		}
 	}
 	if args.RadiusKm == nil {
-		if d := getEnvOrDefault(nil, parseEnvFloat, "WORLD_RADIUS_KM"); d != nil {
+		if d := internal.GetEnvOrDefault(nil, internal.ParseEnvFloat, "WORLD_RADIUS_KM"); d != nil {
 			args.RadiusKm = pulumi.Float64Ptr(d.(float64))
 		}
 	}
+	opts = internal.PkgResourceDefaultOpts(opts)
 	var resource Provider
 	err := ctx.RegisterResource("pulumi:providers:world", name, args, &resource, opts...)
 	if err != nil {
@@ -80,6 +83,12 @@ func (i *Provider) ToProviderOutputWithContext(ctx context.Context) ProviderOutp
 	return pulumi.ToOutputWithContext(ctx, i).(ProviderOutput)
 }
 
+func (i *Provider) ToOutput(ctx context.Context) pulumix.Output[*Provider] {
+	return pulumix.Output[*Provider]{
+		OutputState: i.ToProviderOutputWithContext(ctx).OutputState,
+	}
+}
+
 type ProviderOutput struct{ *pulumi.OutputState }
 
 func (ProviderOutput) ElementType() reflect.Type {
@@ -92,6 +101,12 @@ func (o ProviderOutput) ToProviderOutput() ProviderOutput {
 
 func (o ProviderOutput) ToProviderOutputWithContext(ctx context.Context) ProviderOutput {
 	return o
+}
+
+func (o ProviderOutput) ToOutput(ctx context.Context) pulumix.Output[*Provider] {
+	return pulumix.Output[*Provider]{
+		OutputState: o.OutputState,
+	}
 }
 
 func init() {

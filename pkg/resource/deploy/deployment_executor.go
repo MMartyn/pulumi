@@ -23,8 +23,8 @@ import (
 	"github.com/pulumi/pulumi/pkg/v3/resource/deploy/providers"
 	"github.com/pulumi/pulumi/pkg/v3/resource/graph"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/diag"
-	"github.com/pulumi/pulumi/sdk/v3/go/common/display"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource"
+	"github.com/pulumi/pulumi/sdk/v3/go/common/slice"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/util/contract"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/util/logging"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/util/result"
@@ -43,7 +43,7 @@ type deploymentExecutor struct {
 // checkTargets validates that all the targets passed in refer to existing resources.  Diagnostics
 // are generated for any target that cannot be found.  The target must either have existed in the stack
 // prior to running the operation, or it must be the urn for a resource that was created.
-func (ex *deploymentExecutor) checkTargets(targets UrnTargets, op display.StepOp) result.Result {
+func (ex *deploymentExecutor) checkTargets(targets UrnTargets) result.Result {
 	if !targets.IsConstrained() {
 		return nil
 	}
@@ -61,7 +61,7 @@ func (ex *deploymentExecutor) checkTargets(targets UrnTargets, op display.StepOp
 		if !hasOld && !hasNew {
 			hasUnknownTarget = true
 
-			logging.V(7).Infof("Resource to %v (%v) could not be found in the stack.", op, target)
+			logging.V(7).Infof("Targeted resource could not be found in the stack [urn=%v]", target)
 			if strings.Contains(string(target), "$") {
 				ex.deployment.Diag().Errorf(diag.GetTargetCouldNotBeFoundError(), target)
 			} else {
@@ -159,32 +159,18 @@ func (ex *deploymentExecutor) Execute(callerCtx context.Context, opts Options, p
 		ex.printPendingOperationsWarning()
 	}
 
-	// The set of -t targets provided on the command line.  'nil' means 'update everything'.
-	// Non-nil means 'update only in this set'.  We don't error if the user specifies a target
-	// during `update` that we don't know about because it might be the urn for a resource they
-	// want to create.
-	updateTargetsOpt := opts.UpdateTargets
-	replaceTargetsOpt := opts.ReplaceTargets
-	destroyTargetsOpt := opts.DestroyTargets
-	if res := ex.checkTargets(opts.ReplaceTargets, OpReplace); res != nil {
+	if res := ex.checkTargets(opts.ReplaceTargets); res != nil {
 		return nil, res
-	}
-	if res := ex.checkTargets(opts.DestroyTargets, OpDelete); res != nil {
-		return nil, res
-	}
-
-	if (updateTargetsOpt.IsConstrained() || replaceTargetsOpt.IsConstrained()) && destroyTargetsOpt.IsConstrained() {
-		contract.Failf("Should not be possible to have both .DestroyTargets and .UpdateTargets or .ReplaceTargets")
 	}
 
 	// Begin iterating the source.
-	src, res := ex.deployment.source.Iterate(callerCtx, opts, ex.deployment)
-	if res != nil {
-		return nil, res
+	src, err := ex.deployment.source.Iterate(callerCtx, opts, ex.deployment)
+	if err != nil {
+		return nil, result.FromError(err)
 	}
 
 	// Set up a step generator for this deployment.
-	ex.stepGen = newStepGenerator(ex.deployment, opts, updateTargetsOpt, replaceTargetsOpt)
+	ex.stepGen = newStepGenerator(ex.deployment, opts, opts.Targets, opts.ReplaceTargets)
 
 	// Derive a cancellable context for this deployment. We will only cancel this context if some piece of the
 	// deployment's execution fails.
@@ -196,15 +182,15 @@ func (ex *deploymentExecutor) Execute(callerCtx context.Context, opts Options, p
 	// We iterate the source in its own goroutine because iteration is blocking and we want the main loop to be able to
 	// respond to cancellation requests promptly.
 	type nextEvent struct {
-		Event  SourceEvent
-		Result result.Result
+		Event SourceEvent
+		Error error
 	}
 	incomingEvents := make(chan nextEvent)
 	go func() {
 		for {
-			event, sourceErr := src.Next()
+			event, err := src.Next()
 			select {
-			case incomingEvents <- nextEvent{event, sourceErr}:
+			case incomingEvents <- nextEvent{event, err}:
 				if event == nil {
 					return
 				}
@@ -229,11 +215,11 @@ func (ex *deploymentExecutor) Execute(callerCtx context.Context, opts Options, p
 			select {
 			case event := <-incomingEvents:
 				logging.V(4).Infof("deploymentExecutor.Execute(...): incoming event (nil? %v, %v)", event.Event == nil,
-					event.Result)
+					event.Error)
 
-				if event.Result != nil {
-					if !event.Result.IsBail() {
-						ex.reportError("", event.Result.Error())
+				if event.Error != nil {
+					if !result.IsBail(event.Error) {
+						ex.reportError("", event.Error)
 					}
 					cancel()
 
@@ -242,7 +228,10 @@ func (ex *deploymentExecutor) Execute(callerCtx context.Context, opts Options, p
 				}
 
 				if event.Event == nil {
-					res := ex.performDeletes(ctx, updateTargetsOpt, destroyTargetsOpt)
+					// Check targets before performDeletes mutates the initial Snapshot.
+					targetErr := ex.checkTargets(opts.Targets)
+
+					res := ex.performDeletes(ctx, opts.Targets)
 					if res != nil {
 						if resErr := res.Error(); resErr != nil {
 							logging.V(4).Infof("deploymentExecutor.Execute(...): error performing deletes: %v", resErr)
@@ -250,13 +239,18 @@ func (ex *deploymentExecutor) Execute(callerCtx context.Context, opts Options, p
 							return false, result.Bail()
 						}
 					}
-					return false, res
+
+					if targetErr != nil {
+						// Propagate the target error as it hasn't been reported yet.
+						return false, targetErr
+					}
+					return false, nil
 				}
 
-				if res := ex.handleSingleEvent(event.Event); res != nil {
-					if resErr := res.Error(); resErr != nil {
-						logging.V(4).Infof("deploymentExecutor.Execute(...): error handling event: %v", resErr)
-						ex.reportError(ex.deployment.generateEventURN(event.Event), resErr)
+				if err := ex.handleSingleEvent(event.Event); err != nil {
+					if !result.IsBail(err) {
+						logging.V(4).Infof("deploymentExecutor.Execute(...): error handling event: %v", err)
+						ex.reportError(ex.deployment.generateEventURN(event.Event), err)
 					}
 					cancel()
 					return false, result.Bail()
@@ -273,13 +267,6 @@ func (ex *deploymentExecutor) Execute(callerCtx context.Context, opts Options, p
 
 	ex.stepExec.WaitForCompletion()
 	logging.V(4).Infof("deploymentExecutor.Execute(...): step executor has completed")
-
-	// Now that we've performed all steps in the deployment, ensure that the list of targets to update was
-	// valid.  We have to do this *after* performing the steps as the target list may have referred
-	// to a resource that was created in one of the steps.
-	if res == nil {
-		res = ex.checkTargets(opts.UpdateTargets, OpUpdate)
-	}
 
 	// Check that we did operations for everything expected in the plan. We mutate ResourcePlan.Ops as we run
 	// so by the time we get here everything in the map should have an empty ops list (except for unneeded
@@ -346,7 +333,7 @@ func (ex *deploymentExecutor) Execute(callerCtx context.Context, opts Options, p
 }
 
 func (ex *deploymentExecutor) performDeletes(
-	ctx context.Context, updateTargetsOpt, destroyTargetsOpt UrnTargets,
+	ctx context.Context, targetsOpt UrnTargets,
 ) result.Result {
 	defer func() {
 		// We're done here - signal completion so that the step executor knows to terminate.
@@ -363,17 +350,10 @@ func (ex *deploymentExecutor) performDeletes(
 	// At this point we have generated the set of resources above that we would normally want to
 	// delete.  However, if the user provided -target's we will only actually delete the specific
 	// resources that are in the set explicitly asked for.
-	var targetsOpt UrnTargets
-	if updateTargetsOpt.IsConstrained() {
-		targetsOpt = updateTargetsOpt
-	} else if destroyTargetsOpt.IsConstrained() {
-		targetsOpt = destroyTargetsOpt
-	}
-
-	deleteSteps, res := ex.stepGen.GenerateDeletes(targetsOpt)
-	if res != nil {
+	deleteSteps, err := ex.stepGen.GenerateDeletes(targetsOpt)
+	if err != nil {
 		logging.V(7).Infof("performDeletes(...): generating deletes produced error result")
-		return res
+		return result.FromError(err)
 	}
 
 	deletes := ex.stepGen.ScheduleDeletes(deleteSteps)
@@ -408,25 +388,25 @@ func (ex *deploymentExecutor) performDeletes(
 
 // handleSingleEvent handles a single source event. For all incoming events, it produces a chain that needs
 // to be executed and schedules the chain for execution.
-func (ex *deploymentExecutor) handleSingleEvent(event SourceEvent) result.Result {
+func (ex *deploymentExecutor) handleSingleEvent(event SourceEvent) error {
 	contract.Requiref(event != nil, "event", "must not be nil")
 
 	var steps []Step
-	var res result.Result
+	var err error
 	switch e := event.(type) {
 	case RegisterResourceEvent:
 		logging.V(4).Infof("deploymentExecutor.handleSingleEvent(...): received RegisterResourceEvent")
-		steps, res = ex.stepGen.GenerateSteps(e)
+		steps, err = ex.stepGen.GenerateSteps(e)
 	case ReadResourceEvent:
 		logging.V(4).Infof("deploymentExecutor.handleSingleEvent(...): received ReadResourceEvent")
-		steps, res = ex.stepGen.GenerateReadSteps(e)
+		steps, err = ex.stepGen.GenerateReadSteps(e)
 	case RegisterResourceOutputsEvent:
 		logging.V(4).Infof("deploymentExecutor.handleSingleEvent(...): received register resource outputs")
 		return ex.stepExec.ExecuteRegisterResourceOutputs(e)
 	}
 
-	if res != nil {
-		return res
+	if err != nil {
+		return err
 	}
 
 	ex.stepExec.ExecuteSerial(steps)
@@ -482,7 +462,7 @@ func (ex *deploymentExecutor) refresh(callerCtx context.Context, opts Options, p
 	}
 
 	// Make sure if there were any targets specified, that they all refer to existing resources.
-	if res := ex.checkTargets(opts.RefreshTargets, OpRefresh); res != nil {
+	if res := ex.checkTargets(opts.Targets); res != nil {
 		return res
 	}
 
@@ -492,7 +472,7 @@ func (ex *deploymentExecutor) refresh(callerCtx context.Context, opts Options, p
 	steps := []Step{}
 	resourceToStep := map[*resource.State]Step{}
 	for _, res := range prev.Resources {
-		if opts.RefreshTargets.Contains(res.URN) {
+		if opts.Targets.Contains(res.URN) {
 			// For each resource we're going to refresh we need to ensure we have a provider for it
 			err := ex.deployment.EnsureProvider(res.Provider)
 			if err != nil {
@@ -584,7 +564,7 @@ func (ex *deploymentExecutor) rebuildBaseState(resourceToStep map[*resource.Stat
 
 		// Remove any deleted resources from this resource's dependency list.
 		if len(new.Dependencies) != 0 {
-			deps := make([]resource.URN, 0, len(new.Dependencies))
+			deps := slice.Prealloc[resource.URN](len(new.Dependencies))
 			for _, d := range new.Dependencies {
 				if referenceable[d] {
 					deps = append(deps, d)

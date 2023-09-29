@@ -8,9 +8,13 @@ import (
 	"reflect"
 
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
+	"github.com/pulumi/pulumi/sdk/v3/go/pulumix"
+	"plain-object-defaults/example/internal"
 	"plain-object-defaults/example/mod1"
 	"plain-object-defaults/example/mod2"
 )
+
+var _ = internal.GetEnvOrDefault
 
 // BETA FEATURE - Options to configure the Helm Release resource.
 type HelmReleaseSettings struct {
@@ -29,13 +33,13 @@ func (val *HelmReleaseSettings) Defaults() *HelmReleaseSettings {
 	}
 	tmp := *val
 	if tmp.Driver == nil {
-		if d := getEnvOrDefault("secret", nil, "PULUMI_K8S_HELM_DRIVER"); d != nil {
+		if d := internal.GetEnvOrDefault("secret", nil, "PULUMI_K8S_HELM_DRIVER"); d != nil {
 			driver_ := d.(string)
 			tmp.Driver = &driver_
 		}
 	}
 	if tmp.PluginsPath == nil {
-		if d := getEnvOrDefault(nil, nil, "PULUMI_K8S_HELM_PLUGINS_PATH"); d != nil {
+		if d := internal.GetEnvOrDefault(nil, nil, "PULUMI_K8S_HELM_PLUGINS_PATH"); d != nil {
 			pluginsPath_ := d.(string)
 			tmp.PluginsPath = &pluginsPath_
 		}
@@ -71,12 +75,12 @@ func (val *HelmReleaseSettingsArgs) Defaults() *HelmReleaseSettingsArgs {
 	}
 	tmp := *val
 	if tmp.Driver == nil {
-		if d := getEnvOrDefault("secret", nil, "PULUMI_K8S_HELM_DRIVER"); d != nil {
+		if d := internal.GetEnvOrDefault("secret", nil, "PULUMI_K8S_HELM_DRIVER"); d != nil {
 			tmp.Driver = pulumi.StringPtr(d.(string))
 		}
 	}
 	if tmp.PluginsPath == nil {
-		if d := getEnvOrDefault(nil, nil, "PULUMI_K8S_HELM_PLUGINS_PATH"); d != nil {
+		if d := internal.GetEnvOrDefault(nil, nil, "PULUMI_K8S_HELM_PLUGINS_PATH"); d != nil {
 			tmp.PluginsPath = pulumi.StringPtr(d.(string))
 		}
 	}
@@ -92,6 +96,12 @@ func (i HelmReleaseSettingsArgs) ToHelmReleaseSettingsOutput() HelmReleaseSettin
 
 func (i HelmReleaseSettingsArgs) ToHelmReleaseSettingsOutputWithContext(ctx context.Context) HelmReleaseSettingsOutput {
 	return pulumi.ToOutputWithContext(ctx, i).(HelmReleaseSettingsOutput)
+}
+
+func (i HelmReleaseSettingsArgs) ToOutput(ctx context.Context) pulumix.Output[HelmReleaseSettings] {
+	return pulumix.Output[HelmReleaseSettings]{
+		OutputState: i.ToHelmReleaseSettingsOutputWithContext(ctx).OutputState,
+	}
 }
 
 func (i HelmReleaseSettingsArgs) ToHelmReleaseSettingsPtrOutput() HelmReleaseSettingsPtrOutput {
@@ -135,6 +145,12 @@ func (i *helmReleaseSettingsPtrType) ToHelmReleaseSettingsPtrOutputWithContext(c
 	return pulumi.ToOutputWithContext(ctx, i).(HelmReleaseSettingsPtrOutput)
 }
 
+func (i *helmReleaseSettingsPtrType) ToOutput(ctx context.Context) pulumix.Output[*HelmReleaseSettings] {
+	return pulumix.Output[*HelmReleaseSettings]{
+		OutputState: i.ToHelmReleaseSettingsPtrOutputWithContext(ctx).OutputState,
+	}
+}
+
 // BETA FEATURE - Options to configure the Helm Release resource.
 type HelmReleaseSettingsOutput struct{ *pulumi.OutputState }
 
@@ -158,6 +174,12 @@ func (o HelmReleaseSettingsOutput) ToHelmReleaseSettingsPtrOutputWithContext(ctx
 	return o.ApplyTWithContext(ctx, func(_ context.Context, v HelmReleaseSettings) *HelmReleaseSettings {
 		return &v
 	}).(HelmReleaseSettingsPtrOutput)
+}
+
+func (o HelmReleaseSettingsOutput) ToOutput(ctx context.Context) pulumix.Output[HelmReleaseSettings] {
+	return pulumix.Output[HelmReleaseSettings]{
+		OutputState: o.OutputState,
+	}
 }
 
 // The backend storage driver for Helm. Values are: configmap, secret, memory, sql.
@@ -187,6 +209,12 @@ func (o HelmReleaseSettingsPtrOutput) ToHelmReleaseSettingsPtrOutput() HelmRelea
 
 func (o HelmReleaseSettingsPtrOutput) ToHelmReleaseSettingsPtrOutputWithContext(ctx context.Context) HelmReleaseSettingsPtrOutput {
 	return o
+}
+
+func (o HelmReleaseSettingsPtrOutput) ToOutput(ctx context.Context) pulumix.Output[*HelmReleaseSettings] {
+	return pulumix.Output[*HelmReleaseSettings]{
+		OutputState: o.OutputState,
+	}
 }
 
 func (o HelmReleaseSettingsPtrOutput) Elem() HelmReleaseSettingsOutput {
@@ -245,13 +273,13 @@ func (val *KubeClientSettings) Defaults() *KubeClientSettings {
 	}
 	tmp := *val
 	if tmp.Burst == nil {
-		if d := getEnvOrDefault(nil, parseEnvInt, "PULUMI_K8S_CLIENT_BURST"); d != nil {
+		if d := internal.GetEnvOrDefault(nil, internal.ParseEnvInt, "PULUMI_K8S_CLIENT_BURST"); d != nil {
 			burst_ := d.(int)
 			tmp.Burst = &burst_
 		}
 	}
 	if tmp.Qps == nil {
-		if d := getEnvOrDefault(nil, parseEnvFloat, "PULUMI_K8S_CLIENT_QPS"); d != nil {
+		if d := internal.GetEnvOrDefault(nil, internal.ParseEnvFloat, "PULUMI_K8S_CLIENT_QPS"); d != nil {
 			qps_ := d.(float64)
 			tmp.Qps = &qps_
 		}
@@ -288,12 +316,12 @@ func (val *KubeClientSettingsArgs) Defaults() *KubeClientSettingsArgs {
 	}
 	tmp := *val
 	if tmp.Burst == nil {
-		if d := getEnvOrDefault(nil, parseEnvInt, "PULUMI_K8S_CLIENT_BURST"); d != nil {
+		if d := internal.GetEnvOrDefault(nil, internal.ParseEnvInt, "PULUMI_K8S_CLIENT_BURST"); d != nil {
 			tmp.Burst = pulumi.IntPtr(d.(int))
 		}
 	}
 	if tmp.Qps == nil {
-		if d := getEnvOrDefault(nil, parseEnvFloat, "PULUMI_K8S_CLIENT_QPS"); d != nil {
+		if d := internal.GetEnvOrDefault(nil, internal.ParseEnvFloat, "PULUMI_K8S_CLIENT_QPS"); d != nil {
 			tmp.Qps = pulumi.Float64Ptr(d.(float64))
 		}
 	}
@@ -310,6 +338,12 @@ func (i KubeClientSettingsArgs) ToKubeClientSettingsOutput() KubeClientSettingsO
 
 func (i KubeClientSettingsArgs) ToKubeClientSettingsOutputWithContext(ctx context.Context) KubeClientSettingsOutput {
 	return pulumi.ToOutputWithContext(ctx, i).(KubeClientSettingsOutput)
+}
+
+func (i KubeClientSettingsArgs) ToOutput(ctx context.Context) pulumix.Output[KubeClientSettings] {
+	return pulumix.Output[KubeClientSettings]{
+		OutputState: i.ToKubeClientSettingsOutputWithContext(ctx).OutputState,
+	}
 }
 
 func (i KubeClientSettingsArgs) ToKubeClientSettingsPtrOutput() KubeClientSettingsPtrOutput {
@@ -353,6 +387,12 @@ func (i *kubeClientSettingsPtrType) ToKubeClientSettingsPtrOutputWithContext(ctx
 	return pulumi.ToOutputWithContext(ctx, i).(KubeClientSettingsPtrOutput)
 }
 
+func (i *kubeClientSettingsPtrType) ToOutput(ctx context.Context) pulumix.Output[*KubeClientSettings] {
+	return pulumix.Output[*KubeClientSettings]{
+		OutputState: i.ToKubeClientSettingsPtrOutputWithContext(ctx).OutputState,
+	}
+}
+
 // Options for tuning the Kubernetes client used by a Provider.
 type KubeClientSettingsOutput struct{ *pulumi.OutputState }
 
@@ -376,6 +416,12 @@ func (o KubeClientSettingsOutput) ToKubeClientSettingsPtrOutputWithContext(ctx c
 	return o.ApplyTWithContext(ctx, func(_ context.Context, v KubeClientSettings) *KubeClientSettings {
 		return &v
 	}).(KubeClientSettingsPtrOutput)
+}
+
+func (o KubeClientSettingsOutput) ToOutput(ctx context.Context) pulumix.Output[KubeClientSettings] {
+	return pulumix.Output[KubeClientSettings]{
+		OutputState: o.OutputState,
+	}
 }
 
 // Maximum burst for throttle. Default value is 10.
@@ -404,6 +450,12 @@ func (o KubeClientSettingsPtrOutput) ToKubeClientSettingsPtrOutput() KubeClientS
 
 func (o KubeClientSettingsPtrOutput) ToKubeClientSettingsPtrOutputWithContext(ctx context.Context) KubeClientSettingsPtrOutput {
 	return o
+}
+
+func (o KubeClientSettingsPtrOutput) ToOutput(ctx context.Context) pulumix.Output[*KubeClientSettings] {
+	return pulumix.Output[*KubeClientSettings]{
+		OutputState: o.OutputState,
+	}
 }
 
 func (o KubeClientSettingsPtrOutput) Elem() KubeClientSettingsOutput {
@@ -474,14 +526,14 @@ func (val *LayeredType) Defaults() *LayeredType {
 	tmp.PlainOther = tmp.PlainOther.Defaults()
 
 	if tmp.Question == nil {
-		if d := getEnvOrDefault("<unknown>", nil, "PULUMI_THE_QUESTION"); d != nil {
+		if d := internal.GetEnvOrDefault("<unknown>", nil, "PULUMI_THE_QUESTION"); d != nil {
 			question_ := d.(string)
 			tmp.Question = &question_
 		}
 	}
 	tmp.Recursive = tmp.Recursive.Defaults()
 
-	if isZero(tmp.Thinker) {
+	if internal.IsZero(tmp.Thinker) {
 		tmp.Thinker = "not a good interaction"
 	}
 	return &tmp
@@ -525,7 +577,7 @@ func (val *LayeredTypeArgs) Defaults() *LayeredTypeArgs {
 	tmp.PlainOther = tmp.PlainOther.Defaults()
 
 	if tmp.Question == nil {
-		if d := getEnvOrDefault("<unknown>", nil, "PULUMI_THE_QUESTION"); d != nil {
+		if d := internal.GetEnvOrDefault("<unknown>", nil, "PULUMI_THE_QUESTION"); d != nil {
 			tmp.Question = pulumi.StringPtr(d.(string))
 		}
 	}
@@ -545,6 +597,12 @@ func (i LayeredTypeArgs) ToLayeredTypeOutput() LayeredTypeOutput {
 
 func (i LayeredTypeArgs) ToLayeredTypeOutputWithContext(ctx context.Context) LayeredTypeOutput {
 	return pulumi.ToOutputWithContext(ctx, i).(LayeredTypeOutput)
+}
+
+func (i LayeredTypeArgs) ToOutput(ctx context.Context) pulumix.Output[LayeredType] {
+	return pulumix.Output[LayeredType]{
+		OutputState: i.ToLayeredTypeOutputWithContext(ctx).OutputState,
+	}
 }
 
 func (i LayeredTypeArgs) ToLayeredTypePtrOutput() LayeredTypePtrOutput {
@@ -588,6 +646,12 @@ func (i *layeredTypePtrType) ToLayeredTypePtrOutputWithContext(ctx context.Conte
 	return pulumi.ToOutputWithContext(ctx, i).(LayeredTypePtrOutput)
 }
 
+func (i *layeredTypePtrType) ToOutput(ctx context.Context) pulumix.Output[*LayeredType] {
+	return pulumix.Output[*LayeredType]{
+		OutputState: i.ToLayeredTypePtrOutputWithContext(ctx).OutputState,
+	}
+}
+
 // Make sure that defaults propagate through types
 type LayeredTypeOutput struct{ *pulumi.OutputState }
 
@@ -611,6 +675,12 @@ func (o LayeredTypeOutput) ToLayeredTypePtrOutputWithContext(ctx context.Context
 	return o.ApplyTWithContext(ctx, func(_ context.Context, v LayeredType) *LayeredType {
 		return &v
 	}).(LayeredTypePtrOutput)
+}
+
+func (o LayeredTypeOutput) ToOutput(ctx context.Context) pulumix.Output[LayeredType] {
+	return pulumix.Output[LayeredType]{
+		OutputState: o.OutputState,
+	}
 }
 
 // The answer to the question
@@ -653,6 +723,12 @@ func (o LayeredTypePtrOutput) ToLayeredTypePtrOutput() LayeredTypePtrOutput {
 
 func (o LayeredTypePtrOutput) ToLayeredTypePtrOutputWithContext(ctx context.Context) LayeredTypePtrOutput {
 	return o
+}
+
+func (o LayeredTypePtrOutput) ToOutput(ctx context.Context) pulumix.Output[*LayeredType] {
+	return pulumix.Output[*LayeredType]{
+		OutputState: o.OutputState,
+	}
 }
 
 func (o LayeredTypePtrOutput) Elem() LayeredTypeOutput {
@@ -789,6 +865,12 @@ func (i TypArgs) ToTypOutputWithContext(ctx context.Context) TypOutput {
 	return pulumi.ToOutputWithContext(ctx, i).(TypOutput)
 }
 
+func (i TypArgs) ToOutput(ctx context.Context) pulumix.Output[Typ] {
+	return pulumix.Output[Typ]{
+		OutputState: i.ToTypOutputWithContext(ctx).OutputState,
+	}
+}
+
 func (i TypArgs) ToTypPtrOutput() TypPtrOutput {
 	return i.ToTypPtrOutputWithContext(context.Background())
 }
@@ -830,6 +912,12 @@ func (i *typPtrType) ToTypPtrOutputWithContext(ctx context.Context) TypPtrOutput
 	return pulumi.ToOutputWithContext(ctx, i).(TypPtrOutput)
 }
 
+func (i *typPtrType) ToOutput(ctx context.Context) pulumix.Output[*Typ] {
+	return pulumix.Output[*Typ]{
+		OutputState: i.ToTypPtrOutputWithContext(ctx).OutputState,
+	}
+}
+
 // A test for namespaces (mod main)
 type TypOutput struct{ *pulumi.OutputState }
 
@@ -853,6 +941,12 @@ func (o TypOutput) ToTypPtrOutputWithContext(ctx context.Context) TypPtrOutput {
 	return o.ApplyTWithContext(ctx, func(_ context.Context, v Typ) *Typ {
 		return &v
 	}).(TypPtrOutput)
+}
+
+func (o TypOutput) ToOutput(ctx context.Context) pulumix.Output[Typ] {
+	return pulumix.Output[Typ]{
+		OutputState: o.OutputState,
+	}
 }
 
 func (o TypOutput) Mod1() mod1.TypPtrOutput {
@@ -879,6 +973,12 @@ func (o TypPtrOutput) ToTypPtrOutput() TypPtrOutput {
 
 func (o TypPtrOutput) ToTypPtrOutputWithContext(ctx context.Context) TypPtrOutput {
 	return o
+}
+
+func (o TypPtrOutput) ToOutput(ctx context.Context) pulumix.Output[*Typ] {
+	return pulumix.Output[*Typ]{
+		OutputState: o.OutputState,
+	}
 }
 
 func (o TypPtrOutput) Elem() TypOutput {

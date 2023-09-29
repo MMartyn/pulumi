@@ -115,7 +115,7 @@ ALL_PLATFORMS = ["ubuntu-latest", "windows-latest", "macos-latest"]
 MINIMUM_SUPPORTED_VERSION_SET = {
     "name": "minimum",
     "dotnet": "6",
-    "go": "1.19.x",
+    "go": "1.20.x",
     "nodejs": "16.x",
     "python": "3.9.x",
 }
@@ -123,7 +123,7 @@ MINIMUM_SUPPORTED_VERSION_SET = {
 CURRENT_VERSION_SET = {
     "name": "current",
     "dotnet": "7",
-    "go": "1.20.x",
+    "go": "1.21.x",
     "nodejs": "20.x",
     "python": "3.11.x",
 }
@@ -414,7 +414,7 @@ def get_matrix(
         test_suites += run_gotestsum_ci_matrix_single_package(item, pkg_tests, tags)
 
     if kind == JobKind.ACCEPTANCE_TEST:
-        platforms = list(map(lambda p: "windows-8core-2022" if p == "windows-latest" else p, platforms))
+        platforms = list(map(lambda p: "windows-16core-2022" if p == "windows-latest" else p, platforms))
 
     return {
         "test-suite": test_suites,

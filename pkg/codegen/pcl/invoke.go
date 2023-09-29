@@ -125,13 +125,24 @@ func (b *binder) bindInvokeSignature(args []model.Expression) (model.StaticFunct
 	}
 	pkgSchema, ok := b.options.packageCache.entries[pkgInfo]
 	if !ok {
+		if b.options.skipInvokeTypecheck {
+			return b.zeroSignature(), nil
+		}
 		return b.zeroSignature(), hcl.Diagnostics{unknownPackage(pkg, tokenRange)}
 	}
 
 	var fn *schema.Function
 	if f, tk, ok, err := pkgSchema.LookupFunction(token); err != nil {
+		if b.options.skipInvokeTypecheck {
+			return b.zeroSignature(), nil
+		}
+
 		return b.zeroSignature(), hcl.Diagnostics{functionLoadError(token, err, tokenRange)}
 	} else if !ok {
+		if b.options.skipInvokeTypecheck {
+			return b.zeroSignature(), nil
+		}
+
 		return b.zeroSignature(), hcl.Diagnostics{unknownFunction(token, tokenRange)}
 	} else {
 		fn = f
@@ -190,13 +201,17 @@ func (b *binder) signatureForArgs(fn *schema.Function, args model.Expression) (m
 }
 
 // Heuristic to decide when to use `fnOutput` form of a function. Will
-// conservatively prefer `false`. It only decides to return `true` if
-// doing so avoids the need to introduce an `apply` form to
+// conservatively prefer `false` unless bind option choose to prefer otherwise.
+// It decides to return `true` if doing so avoids the need to introduce an `apply` form to
 // accommodate `Output` args (`Promise` args do not count).
 func (b *binder) useOutputVersion(fn *schema.Function, args model.Expression) bool {
 	if !fn.NeedsOutputVersion() {
 		// No code emitted for an `fnOutput` form, impossible.
 		return false
+	}
+
+	if b.options.preferOutputVersionedInvokes {
+		return true
 	}
 
 	outputFormParamType := b.schemaTypeToType(fn.Inputs.InputShape)
