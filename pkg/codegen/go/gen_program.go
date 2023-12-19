@@ -47,6 +47,7 @@ type generator struct {
 	readDirTempSpiller  *readDirSpiller
 	splatSpiller        *splatSpiller
 	optionalSpiller     *optionalSpiller
+	inlineInvokeSpiller *inlineInvokeSpiller
 	scopeTraversalRoots codegen.StringSet
 	arrayHelpers        map[string]*promptToInputArrayHelper
 	isErrAssigned       bool
@@ -102,6 +103,7 @@ func newGenerator(program *pcl.Program, opts GenerateProgramOptions) (*generator
 		readDirTempSpiller:  &readDirSpiller{},
 		splatSpiller:        &splatSpiller{},
 		optionalSpiller:     &optionalSpiller{},
+		inlineInvokeSpiller: &inlineInvokeSpiller{},
 		scopeTraversalRoots: codegen.NewStringSet(),
 		arrayHelpers:        make(map[string]*promptToInputArrayHelper),
 		externalCache:       opts.ExternalCache,
@@ -193,10 +195,10 @@ func componentInputType(pclType model.Type) string {
 	switch pclType := pclType.(type) {
 	case *model.ListType:
 		elementType := componentInputElementType(pclType.ElementType)
-		return fmt.Sprintf("[]%s", elementType)
+		return "[]" + elementType
 	case *model.MapType:
 		elementType := componentInputElementType(pclType.ElementType)
-		return fmt.Sprintf("map[string]%s", elementType)
+		return "map[string]" + elementType
 	default:
 		return componentInputElementType(pclType)
 	}
@@ -242,14 +244,14 @@ func (g *generator) genComponentArgs(w io.Writer, componentName string, componen
 				switch configType.ElementType.(type) {
 				case *model.ObjectType:
 					objectTypeName := configObjectTypeName(config.Name())
-					inputType = fmt.Sprintf("[]*%s", objectTypeName)
+					inputType = "[]*" + objectTypeName
 				}
 			case *model.MapType:
 				// for map(T) where T is an object type, generate Dictionary<string, T>
 				switch configType.ElementType.(type) {
 				case *model.ObjectType:
 					objectTypeName := configObjectTypeName(config.Name())
-					inputType = fmt.Sprintf("map[string]*%s", objectTypeName)
+					inputType = "map[string]*" + objectTypeName
 				}
 			}
 			g.Fgenf(w, "%s %s\n", fieldName, inputType)
@@ -291,7 +293,7 @@ func (g *generator) genComponentDefinition(w io.Writer, componentName string, co
 
 	g.Indented(func() {
 		g.Fgenf(w, "%svar componentResource %s\n", g.Indent, componentTypeName)
-		token := fmt.Sprintf("components:index:%s", componentTypeName)
+		token := "components:index:" + componentTypeName
 		g.Fgenf(w, "%serr := ctx.RegisterComponentResource(\"%s\", ", g.Indent, token)
 		g.Fgenf(w, "name, &componentResource, opts...)\n")
 		g.Fgenf(w, "%sif err != nil {\n", g.Indent)
@@ -555,7 +557,7 @@ require (
 
 		version := ""
 		if p.Version != nil {
-			version = fmt.Sprintf("v%s", p.Version.String())
+			version = "v" + p.Version.String()
 		}
 		if packageName != "" {
 			fmt.Fprintf(&gomod, "	%s %s\n", packageName, version)
@@ -709,10 +711,9 @@ func (g *generator) collectImports(program *pcl.Program) (helpers codegen.String
 			if err != nil {
 				if r.Schema != nil {
 					panic(err)
-				} else {
-					// for unknown resources, make a best guess
-					vPath = "/v1"
 				}
+				// for unknown resources, make a best guess
+				vPath = "/v1"
 			}
 
 			g.addPulumiImport(pkg, vPath, mod, name)
@@ -1003,6 +1004,10 @@ func (g *generator) genResource(w io.Writer, r *pcl.Resource) {
 			destType, diagnostics := r.InputType.Traverse(hcl.TraverseAttr{Name: input.Name})
 			g.diagnostics = append(g.diagnostics, diagnostics...)
 			expr, temps := g.lowerExpression(input.Value, destType.(model.Type))
+			expr, invokeTemps := g.rewriteInlineInvokes(expr)
+			for _, t := range invokeTemps {
+				temps = append(temps, t)
+			}
 			input.Value = expr
 			g.genTemps(w, temps)
 		}
@@ -1309,7 +1314,7 @@ func (g *generator) genTempsMultiReturn(w io.Writer, temps []interface{}, zeroVa
 			g.Fgenf(w, "%s = %.v\n", t.Name, t.Value.FalseResult)
 			g.Fgenf(w, "}\n")
 		case *spillTemp:
-			bytesVar := fmt.Sprintf("tmp%s", strings.ToUpper(t.Variable.Name))
+			bytesVar := "tmp" + strings.ToUpper(t.Variable.Name)
 			g.Fgenf(w, "%s, err := json.Marshal(", bytesVar)
 			args := t.Value.(*model.FunctionCallExpression).Args[0]
 			g.Fgenf(w, "%.v)\n", args)
@@ -1332,10 +1337,10 @@ func (g *generator) genTempsMultiReturn(w io.Writer, temps []interface{}, zeroVa
 				g.Fgenf(w, "return err\n")
 			}
 			g.Fgenf(w, "}\n")
-			namesVar := fmt.Sprintf("fileNames%s", tmpSuffix)
+			namesVar := "fileNames" + tmpSuffix
 			g.Fgenf(w, "%s := make([]string, len(%s))\n", namesVar, t.Name)
-			iVar := fmt.Sprintf("key%s", tmpSuffix)
-			valVar := fmt.Sprintf("val%s", tmpSuffix)
+			iVar := "key" + tmpSuffix
+			valVar := "val" + tmpSuffix
 			g.Fgenf(w, "for %s, %s := range %s {\n", iVar, valVar, t.Name)
 			g.Fgenf(w, "%s[%s] = %s.Name()\n", namesVar, iVar, valVar)
 			g.Fgenf(w, "}\n")
@@ -1352,6 +1357,12 @@ func (g *generator) genTempsMultiReturn(w io.Writer, temps []interface{}, zeroVa
 			g.Fgenf(w, "}\n")
 		case *optionalTemp:
 			g.Fgenf(w, "%s := %.v\n", t.Name, t.Value)
+		case *inlineInvokeTemp:
+			g.Fgenf(w, "%s, err := %.v\n", t.Name, t.Value)
+			g.Fgenf(w, "if err != nil {\n")
+			g.Fgenf(w, "return err\n")
+			g.Fgenf(w, "}\n")
+			g.isErrAssigned = true
 		default:
 			contract.Failf("unexpected temp type: %v", t)
 		}

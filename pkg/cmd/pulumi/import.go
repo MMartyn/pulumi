@@ -42,6 +42,7 @@ import (
 	"github.com/pulumi/pulumi/pkg/v3/resource/stack"
 	pkgWorkspace "github.com/pulumi/pulumi/pkg/v3/workspace"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/diag"
+	"github.com/pulumi/pulumi/sdk/v3/go/common/env"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource/plugin"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/tokens"
@@ -58,12 +59,12 @@ import (
 func parseResourceSpec(spec string) (string, resource.URN, error) {
 	equals := strings.Index(spec, "=")
 	if equals == -1 {
-		return "", "", fmt.Errorf("spec must be of the form name=URN")
+		return "", "", errors.New("spec must be of the form name=URN")
 	}
 
 	name, urn := spec[:equals], resource.URN(spec[equals+1:])
 	if name == "" || urn == "" {
-		return "", "", fmt.Errorf("spec must be of the form name=URN")
+		return "", "", errors.New("spec must be of the form name=URN")
 	}
 
 	if !urn.IsValid() {
@@ -82,10 +83,11 @@ func makeImportFileFromResourceList(resources []plugin.ResourceImport) (importFi
 	for i, res := range resources {
 		specs[i] = importSpec{
 			Type:              tokens.Type(res.Type),
-			Name:              tokens.QName(res.Name),
+			Name:              res.Name,
 			ID:                resource.ID(res.ID),
 			Version:           res.Version,
 			PluginDownloadURL: res.PluginDownloadURL,
+			// TODO(https://github.com/pulumi/pulumi/issues/14532): Add Component, Remote, and LogicalName to ResourceImport
 		}
 	}
 
@@ -103,7 +105,7 @@ func makeImportFile(
 	nameTable := map[string]resource.URN{}
 	res := importSpec{
 		Type:       tokens.Type(typ),
-		Name:       tokens.QName(name),
+		Name:       name,
 		ID:         resource.ID(id),
 		Version:    version,
 		Properties: properties,
@@ -142,18 +144,23 @@ func makeImportFile(
 }
 
 type importSpec struct {
-	Type              tokens.Type  `json:"type"`
-	Name              tokens.QName `json:"name"`
-	ID                resource.ID  `json:"id"`
-	Parent            string       `json:"parent"`
-	Provider          string       `json:"provider"`
-	Version           string       `json:"version"`
-	PluginDownloadURL string       `json:"pluginDownloadUrl"`
-	Properties        []string     `json:"properties"`
+	Type              tokens.Type `json:"type"`
+	Name              string      `json:"name"`
+	ID                resource.ID `json:"id,omitempty"`
+	Parent            string      `json:"parent,omitempty"`
+	Provider          string      `json:"provider,omitempty"`
+	Version           string      `json:"version,omitempty"`
+	PluginDownloadURL string      `json:"pluginDownloadUrl,omitempty"`
+	Properties        []string    `json:"properties,omitempty"`
+	Component         bool        `json:"component,omitempty"`
+	Remote            bool        `json:"remote,omitempty"`
+
+	// LogicalName is the resources Pulumi name (i.e. the first argument to `new Resource`).
+	LogicalName string `json:"logicalName,omitempty"`
 }
 
 type importFile struct {
-	NameTable map[string]resource.URN `json:"nameTable"`
+	NameTable map[string]resource.URN `json:"nameTable,omitempty"`
 	Resources []importSpec            `json:"resources"`
 }
 
@@ -171,11 +178,51 @@ func readImportFile(p string) (importFile, error) {
 	return result, nil
 }
 
-func parseImportFile(f importFile, protectResources bool) ([]deploy.Import, importer.NameTable, error) {
-	// Build the name table.
-	names := importer.NameTable{}
-	for name, urn := range f.NameTable {
-		names[urn] = name
+func writeImportFile(v importFile, f io.Writer) error {
+	enc := json.NewEncoder(f)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "    ")
+	err := enc.Encode(v)
+	return err
+}
+
+func writeImportFileToTemp(v importFile) (string, error) {
+	wd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("working directory: %w", err)
+	}
+	f, err := os.CreateTemp(wd, "pulumi-import-*.json")
+	if err != nil {
+		return "", fmt.Errorf("create temp file: %w", err)
+	}
+	path := f.Name()
+	defer contract.IgnoreClose(f)
+
+	err = writeImportFile(v, f)
+	if err != nil {
+		return "", errors.Join(err, f.Close(), os.Remove(path))
+	}
+	return path, f.Close()
+}
+
+func parseImportFile(
+	f importFile, stack tokens.StackName, proj tokens.PackageName, protectResources bool,
+) ([]deploy.Import, importer.NameTable, error) {
+	// First check for uniqueness and ambiguity, takenNames tracks both that a name is used (it's in the map) and if
+	// it's ambiguous (it's true).
+	takenNames := map[string]bool{}
+	// takenURNs simply tracks that a URN is used, it's not possible for a URN to be ambiguous. We fill this
+	// later because it requires parents to be resolved.
+	takenURNs := map[resource.URN]struct{}{}
+	// Prefill takenNames with all the resource names so we can do quick uniqueness checks below
+	for _, spec := range f.Resources {
+		takenNames[spec.Name] = false
+	}
+
+	// TODO: When Go 1.21 is released, switch to errors.Join.
+	var errs error
+	pusherrf := func(format string, args ...interface{}) {
+		errs = multierror.Append(errs, fmt.Errorf(format, args...))
 	}
 
 	// Attempts to generate a human-readable description of the given import spec
@@ -206,49 +253,17 @@ func parseImportFile(f importFile, protectResources bool) ([]deploy.Import, impo
 		return sb.String()
 	}
 
-	// TODO: When Go 1.21 is released, switch to errors.Join.
-	var errs error
-	pusherrf := func(format string, args ...interface{}) {
-		errs = multierror.Append(errs, fmt.Errorf(format, args...))
+	for i, spec := range f.Resources {
+		// We default LogicalName and Name to each other if either is missing.
+		if spec.LogicalName == "" {
+			f.Resources[i].LogicalName = spec.Name
+		}
+		if spec.Name == "" {
+			f.Resources[i].Name = spec.LogicalName
+		}
 	}
 
-	makeUnique, checkAmbiguous := func() (func(int, tokens.QName) tokens.QName, func(tokens.QName) bool) {
-		// Track used resource names.
-		takenNames := map[tokens.QName]struct{}{}
-		// Track indexes that are not unique and need to be made unique.
-		duplicateIndexes := map[int]struct{}{}
-		// Track parent/provider/etc references that are ambiguous when referenced.
-		ambiguousNames := map[tokens.QName]struct{}{}
-		for i, spec := range f.Resources {
-			if _, exists := takenNames[spec.Name]; exists {
-				duplicateIndexes[i] = struct{}{}
-				ambiguousNames[spec.Name] = struct{}{}
-			}
-			// Prepopulate already taken names first to avoid using them in makeUnique.
-			takenNames[spec.Name] = struct{}{}
-		}
-		checkAmbiguous := func(name tokens.QName) bool {
-			_, isAmbiguous := ambiguousNames[name]
-			return isAmbiguous
-		}
-		makeUnique := func(i int, name tokens.QName) tokens.QName {
-			if _, isDuplicate := duplicateIndexes[i]; !isDuplicate {
-				return name
-			}
-			newName := name
-			for suffix := 1; ; suffix++ {
-				if _, exists := takenNames[newName]; !exists {
-					// No conflict.
-					takenNames[newName] = struct{}{}
-					return newName
-				}
-				newName = tokens.QName(fmt.Sprintf("%s_%d", name, suffix))
-			}
-		}
-		return makeUnique, checkAmbiguous
-	}()
-
-	imports := make([]deploy.Import, len(f.Resources))
+	// Sanity check some basic constraints that names and types etc are filled in.
 	for i, spec := range f.Resources {
 		if spec.Type == "" {
 			pusherrf("%v has no type", describeResource(i, spec))
@@ -256,41 +271,148 @@ func parseImportFile(f importFile, protectResources bool) ([]deploy.Import, impo
 		if spec.Name == "" {
 			pusherrf("%v has no name", describeResource(i, spec))
 		}
-		if spec.ID == "" {
+		if !spec.Component && spec.ID == "" {
 			pusherrf("%v has no ID", describeResource(i, spec))
+		} else if spec.Component && spec.ID != "" {
+			pusherrf("%v has an ID, but is marked as a component", describeResource(i, spec))
+		}
+		if spec.Remote && !spec.Component {
+			pusherrf("%v is marked as remote, but not as a component", describeResource(i, spec))
 		}
 
+		// Check if any earlier resource has this name, if so mark it as ambiguous this is only an error if
+		// something tries to use it (checked later on).
+		for j, other := range f.Resources {
+			if i > j && spec.Name == other.Name {
+				takenNames[spec.Name] = true
+			}
+		}
+	}
+
+	// If we've got errors already just exit
+	if errs != nil {
+		return nil, nil, errs
+	}
+
+	// A mapping from name to URN, prefilled with emptys and what was in the name table so we can do existence checks
+	// for expected names.
+	urnMapping := make(map[string]resource.URN)
+	// The opposite of urnMapping, a mapping from URN to name.
+	names := importer.NameTable{}
+	for name, urn := range f.NameTable {
+		names[urn] = name
+		urnMapping[name] = urn
+		// We can add these URNs to the taken set, it's not an error to add them twice at this point.
+		takenURNs[urn] = struct{}{}
+	}
+	for _, spec := range f.Resources {
+		urnMapping[spec.Name] = ""
+	}
+
+	// We need to keep going till all the resources are resolved.
+	dones := make([]bool, len(f.Resources))
+	done := func() bool {
+		if errs != nil {
+			return true
+		}
+		for _, done := range dones {
+			if !done {
+				return false
+			}
+		}
+		return true
+	}
+
+	for !done() {
+		for i, spec := range f.Resources {
+			// If we've already done this URN no need to do it again
+			if dones[i] {
+				continue
+			}
+
+			var parentType tokens.Type
+			if spec.Parent != "" {
+				// We can find the parent type by looking up the parent by name then finding it's type
+
+				// takenNames will be true if this name is ambiguous, in which case we can't use it as a
+				// parent but we just let the rest of the code below run so we can collect further errors.
+				if takenNames[spec.Parent] {
+					pusherrf("%v has an ambiguous parent",
+						describeResource(i, spec))
+				}
+
+				// Is this name already in the name table?
+				if urn, ok := f.NameTable[spec.Parent]; ok {
+					parentType = urn.QualifiedType()
+				} else {
+					// Not in the name table, is it in the urn mapping yet?
+					urn, ok := urnMapping[spec.Parent]
+
+					// There's three cases to cover here:
+					// 1. We didn't find the parent, in which case just push an error
+					// 2. We found the parent but it's urn is currently blank, in which case we'll loop around
+					// 3. We found the parent and got it's URN
+					if !ok {
+						pusherrf("the parent '%v' for %v has no entry in 'nameTable'",
+							spec.Parent, describeResource(i, spec))
+					} else if urn == "" {
+						// Skip this resource for now, we'll have to loop again to get it once it's parent URN is worked out
+						continue
+					} else {
+						parentType = urn.QualifiedType()
+					}
+				}
+			}
+
+			urn := resource.NewURN(stack.Q(), proj, parentType, spec.Type, spec.LogicalName)
+			// Check if this URN is unique and if not add an error
+			if _, ok := takenURNs[urn]; ok {
+				pusherrf("%v has an ambiguous URN, set name (or logical name) to be unique", describeResource(i, spec))
+			}
+			urnMapping[spec.Name] = urn
+			takenURNs[urn] = struct{}{}
+			// This might clash with earlier entries in the name table (unique urn, but duplicate name) that's
+			// fine and the code generators should deal with it.
+			names[urn] = spec.Name
+			// Mark this resource as done
+			dones[i] = true
+		}
+	}
+
+	// If we've got errors already just exit
+	if errs != nil {
+		return nil, nil, errs
+	}
+
+	imports := make([]deploy.Import, len(f.Resources))
+	for i, spec := range f.Resources {
 		imp := deploy.Import{
 			Type:              spec.Type,
-			Name:              makeUnique(i, spec.Name),
+			Name:              spec.LogicalName,
 			ID:                spec.ID,
 			Protect:           protectResources,
 			Properties:        spec.Properties,
 			PluginDownloadURL: spec.PluginDownloadURL,
+			Component:         spec.Component,
+			Remote:            spec.Remote,
 		}
 
 		if spec.Parent != "" {
-			if checkAmbiguous(tokens.QName(spec.Parent)) {
-				pusherrf("%v has an ambiguous parent",
-					describeResource(i, spec))
-			}
-			urn, ok := f.NameTable[spec.Parent]
-			if !ok {
-				pusherrf("the parent '%v' for %v has no name",
-					spec.Parent, describeResource(i, spec))
-			} else {
+			urn, ok := urnMapping[spec.Parent]
+			if ok {
+				// No need to add errors here, we'll have done that above when building URNs
 				imp.Parent = urn
 			}
 		}
 
 		if spec.Provider != "" {
-			if checkAmbiguous(tokens.QName(spec.Provider)) {
+			if takenNames[spec.Provider] {
 				pusherrf("%v has an ambiguous provider",
 					describeResource(i, spec))
 			}
 			urn, ok := f.NameTable[spec.Provider]
 			if !ok {
-				pusherrf("the provider '%v' for %v has no name",
+				pusherrf("the provider '%v' for %v has no entry in 'nameTable'",
 					spec.Provider, describeResource(i, spec))
 			} else {
 				imp.Provider = urn
@@ -342,7 +464,7 @@ type programGeneratorFunc func(
 ) (map[string][]byte, hcl.Diagnostics, error)
 
 func generateImportedDefinitions(ctx *plugin.Context,
-	out io.Writer, stackName tokens.Name, projectName tokens.PackageName,
+	out io.Writer, stackName tokens.StackName, projectName tokens.PackageName,
 	snap *deploy.Snapshot, programGenerator programGeneratorFunc, names importer.NameTable,
 	imports []deploy.Import, protectResources bool,
 ) (bool, error) {
@@ -503,7 +625,12 @@ func newImportCmd() *cobra.Command {
 			"Each resource may specify which input properties to import with;\n" +
 			"\n" +
 			"If a resource does not specify any properties the default behaviour is to\n" +
-			"import using all required properties.\n",
+			"import using all required properties.\n" +
+			"\n" +
+			"You can use `pulumi preview` with the `--import-file` option to emit an import file\n" +
+			"for all resources that need creating from the preview. This will fill in all the name,\n" +
+			"type, parent and provider information for you and just require you to fill in resource\n" +
+			"IDs and any properties.\n",
 		Run: cmdutil.RunResultFunc(func(cmd *cobra.Command, args []string) result.Result {
 			ctx := commandContext()
 
@@ -542,9 +669,12 @@ func newImportCmd() *cobra.Command {
 				}
 				defer contract.IgnoreClose(converter)
 
-				pCtx.Diag.Warningf(diag.RawMessage("", "Plugin converters are currently experimental"))
-
 				installProvider := func(provider tokens.Package) *semver.Version {
+					// If auto plugin installs are disabled just return nil, the mapper will still carry on
+					if env.DisableAutomaticPluginAcquisition.Value() {
+						return nil
+					}
+
 					log := func(sev diag.Severity, msg string) {
 						pCtx.Diag.Logf(sev, diag.RawMessage("", msg))
 					}
@@ -580,6 +710,13 @@ func newImportCmd() *cobra.Command {
 				})
 				if err != nil {
 					return result.FromError(err)
+				}
+
+				printDiagnostics(sink, resp.Diagnostics)
+				if resp.Diagnostics.HasErrors() {
+					// If we've got error diagnostics then state conversion failed, we've printed the error above so
+					// just return a plain message here.
+					return result.Error("conversion failed")
 				}
 
 				f, err := makeImportFileFromResourceList(resp.Resources)
@@ -627,7 +764,8 @@ func newImportCmd() *cobra.Command {
 				output = f
 			}
 
-			imports, nameTable, err := parseImportFile(importFile, protectResources)
+			// Fetch the project.
+			proj, root, err := readProject()
 			if err != nil {
 				return result.FromError(err)
 			}
@@ -678,8 +816,13 @@ func newImportCmd() *cobra.Command {
 				opts.Display.SuppressPermalink = true
 			}
 
-			// Fetch the project.
-			proj, root, err := readProject()
+			// Fetch the current stack.
+			s, err := requireStack(ctx, stackName, stackLoadOnly, opts.Display)
+			if err != nil {
+				return result.FromError(err)
+			}
+
+			imports, nameTable, err := parseImportFile(importFile, s.Ref().Name(), proj.Name, protectResources)
 			if err != nil {
 				return result.FromError(err)
 			}
@@ -737,12 +880,6 @@ func newImportCmd() *cobra.Command {
 				}
 			}
 
-			// Fetch the current stack.
-			s, err := requireStack(ctx, stackName, stackLoadOnly, opts.Display)
-			if err != nil {
-				return result.FromError(err)
-			}
-
 			m, err := getUpdateMetadata(message, root, execKind, execAgent, false, cmd.Flags())
 			if err != nil {
 				return result.FromError(fmt.Errorf("gathering environment metadata: %w", err))
@@ -757,9 +894,19 @@ func newImportCmd() *cobra.Command {
 			if err != nil {
 				return result.FromError(fmt.Errorf("getting stack decrypter: %w", err))
 			}
+			encrypter, err := sm.Encrypter()
+			if err != nil {
+				return result.FromError(fmt.Errorf("getting stack encrypter: %w", err))
+			}
 
 			stackName := s.Ref().Name().String()
-			configErr := workspace.ValidateStackConfigAndApplyProjectConfig(stackName, proj, cfg.Config, decrypter)
+			configErr := workspace.ValidateStackConfigAndApplyProjectConfig(
+				stackName,
+				proj,
+				cfg.Environment,
+				cfg.Config,
+				encrypter,
+				decrypter)
 			if configErr != nil {
 				return result.FromError(fmt.Errorf("validating stack config: %w", configErr))
 			}
@@ -822,6 +969,19 @@ func newImportCmd() *cobra.Command {
 				if res.Error() == context.Canceled {
 					return result.FromError(errors.New("import cancelled"))
 				}
+
+				// If we did a conversion import (i.e. from!="") then lets write the file we've built out to the local
+				// directory so if there's any issues users can manually edit the file and try again with --file
+				if from != "" {
+					path, err := writeImportFileToTemp(importFile)
+					if err != nil {
+						return result.FromError(err)
+					}
+					pCtx.Diag.Infof(diag.Message("",
+						"Generated import file written out, edit and rerun import with --file %s"),
+						path, path)
+				}
+
 				return PrintEngineResult(res)
 			}
 			return nil

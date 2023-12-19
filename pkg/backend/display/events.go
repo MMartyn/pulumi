@@ -82,6 +82,30 @@ func ConvertEngineEvent(e engine.Event, showSecrets bool) (apitype.EngineEvent, 
 			EnforcementLevel:     string(p.EnforcementLevel),
 		}
 
+	case engine.PolicyRemediationEvent:
+		p, ok := e.Payload().(engine.PolicyRemediationEventPayload)
+		if !ok {
+			return apiEvent, eventTypePayloadMismatch
+		}
+
+		// Serialize properties, ignoring errors, as with other event types.
+		encrypter := config.BlindingCrypter
+		before, err := stack.SerializeProperties(p.Before, encrypter, showSecrets)
+		contract.IgnoreError(err)
+		after, err := stack.SerializeProperties(p.After, encrypter, showSecrets)
+		contract.IgnoreError(err)
+
+		apiEvent.PolicyRemediationEvent = &apitype.PolicyRemediationEvent{
+			ResourceURN:          string(p.ResourceURN),
+			Color:                string(p.Color),
+			PolicyName:           p.PolicyName,
+			PolicyPackName:       p.PolicyPackName,
+			PolicyPackVersion:    p.PolicyPackVersion,
+			PolicyPackVersionTag: p.PolicyPackVersion,
+			Before:               before,
+			After:                after,
+		}
+
 	case engine.PreludeEvent:
 		p, ok := e.Payload().(engine.PreludeEventPayload)
 		if !ok {
@@ -143,6 +167,9 @@ func ConvertEngineEvent(e engine.Event, showSecrets bool) (apitype.EngineEvent, 
 			Status:   int(p.Status),
 			Steps:    p.Steps,
 		}
+
+	case engine.PolicyLoadEvent:
+		apiEvent.PolicyLoadEvent = &apitype.PolicyLoadEvent{}
 
 	default:
 		return apiEvent, fmt.Errorf("unknown event type %q", e.Type)
@@ -252,18 +279,18 @@ func ConvertJSONEvent(apiEvent apitype.EngineEvent) (engine.Event, error) {
 
 	switch {
 	case apiEvent.CancelEvent != nil:
-		event = engine.NewEvent(engine.CancelEvent, nil)
+		event = engine.NewCancelEvent()
 
 	case apiEvent.StdoutEvent != nil:
 		p := apiEvent.StdoutEvent
-		event = engine.NewEvent(engine.StdoutColorEvent, engine.StdoutEventPayload{
+		event = engine.NewEvent(engine.StdoutEventPayload{
 			Message: p.Message,
 			Color:   colors.Colorization(p.Color),
 		})
 
 	case apiEvent.DiagnosticEvent != nil:
 		p := apiEvent.DiagnosticEvent
-		event = engine.NewEvent(engine.DiagEvent, engine.DiagEventPayload{
+		event = engine.NewEvent(engine.DiagEventPayload{
 			URN:       resource.URN(p.URN),
 			Prefix:    p.Prefix,
 			Message:   p.Message,
@@ -275,7 +302,7 @@ func ConvertJSONEvent(apiEvent apitype.EngineEvent) (engine.Event, error) {
 
 	case apiEvent.PolicyEvent != nil:
 		p := apiEvent.PolicyEvent
-		event = engine.NewEvent(engine.PolicyViolationEvent, engine.PolicyViolationEventPayload{
+		event = engine.NewEvent(engine.PolicyViolationEventPayload{
 			ResourceURN:       resource.URN(p.ResourceURN),
 			Message:           p.Message,
 			Color:             colors.Colorization(p.Color),
@@ -285,11 +312,32 @@ func ConvertJSONEvent(apiEvent apitype.EngineEvent) (engine.Event, error) {
 			EnforcementLevel:  apitype.EnforcementLevel(p.EnforcementLevel),
 		})
 
+	case apiEvent.PolicyRemediationEvent != nil:
+		p := apiEvent.PolicyRemediationEvent
+
+		// Deserialize the before and after properties, ignoring serialization
+		// errors as the other event types do (e.g., step events).
+		crypter := config.BlindingCrypter
+		before, err := stack.DeserializeProperties(p.Before, crypter, crypter)
+		contract.IgnoreError(err)
+		after, err := stack.DeserializeProperties(p.After, crypter, crypter)
+		contract.IgnoreError(err)
+
+		event = engine.NewEvent(engine.PolicyRemediationEventPayload{
+			ResourceURN:       resource.URN(p.ResourceURN),
+			Color:             colors.Colorization(p.Color),
+			PolicyName:        p.PolicyName,
+			PolicyPackName:    p.PolicyPackName,
+			PolicyPackVersion: p.PolicyPackVersion,
+			Before:            before,
+			After:             after,
+		})
+
 	case apiEvent.PreludeEvent != nil:
 		p := apiEvent.PreludeEvent
 
 		// Convert the config bag.
-		event = engine.NewEvent(engine.PreludeEvent, engine.PreludeEventPayload{
+		event = engine.NewEvent(engine.PreludeEventPayload{
 			Config: p.Config,
 		})
 
@@ -300,7 +348,7 @@ func ConvertJSONEvent(apiEvent apitype.EngineEvent) (engine.Event, error) {
 		for op, count := range p.ResourceChanges {
 			changes[display.StepOp(op)] = count
 		}
-		event = engine.NewEvent(engine.SummaryEvent, engine.SummaryEventPayload{
+		event = engine.NewEvent(engine.SummaryEventPayload{
 			MaybeCorrupt:    p.MaybeCorrupt,
 			Duration:        time.Duration(p.DurationSeconds) * time.Second,
 			ResourceChanges: changes,
@@ -309,25 +357,28 @@ func ConvertJSONEvent(apiEvent apitype.EngineEvent) (engine.Event, error) {
 
 	case apiEvent.ResourcePreEvent != nil:
 		p := apiEvent.ResourcePreEvent
-		event = engine.NewEvent(engine.ResourcePreEvent, engine.ResourcePreEventPayload{
+		event = engine.NewEvent(engine.ResourcePreEventPayload{
 			Metadata: convertJSONStepEventMetadata(p.Metadata),
 			Planning: p.Planning,
 		})
 
 	case apiEvent.ResOutputsEvent != nil:
 		p := apiEvent.ResOutputsEvent
-		event = engine.NewEvent(engine.ResourceOutputsEvent, engine.ResourceOutputsEventPayload{
+		event = engine.NewEvent(engine.ResourceOutputsEventPayload{
 			Metadata: convertJSONStepEventMetadata(p.Metadata),
 			Planning: p.Planning,
 		})
 
 	case apiEvent.ResOpFailedEvent != nil:
 		p := apiEvent.ResOpFailedEvent
-		event = engine.NewEvent(engine.ResourceOperationFailed, engine.ResourceOperationFailedPayload{
+		event = engine.NewEvent(engine.ResourceOperationFailedPayload{
 			Metadata: convertJSONStepEventMetadata(p.Metadata),
 			Status:   resource.Status(p.Status),
 			Steps:    p.Steps,
 		})
+
+	case apiEvent.PolicyLoadEvent != nil:
+		event = engine.NewEvent(engine.PolicyLoadEventPayload{})
 
 	default:
 		return event, errors.New("unknown event type")

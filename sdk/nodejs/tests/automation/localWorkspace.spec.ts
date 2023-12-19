@@ -139,6 +139,45 @@ describe("LocalWorkspace", () => {
             await workspace.removeStack(stackName);
         });
     });
+    it(`Environment functions`, async function () {
+        // Skipping test because the required environments are in the moolumi org.
+        if (getTestOrg() !== "moolumi") {
+            this.skip();
+            return;
+        }
+        const projectName = "node_env_test";
+        const projectSettings: ProjectSettings = {
+            name: projectName,
+            runtime: "nodejs",
+        };
+        const ws = await LocalWorkspace.create({ projectSettings });
+        const stackName = fullyQualifiedStackName(getTestOrg(), projectName, `int_test${getTestSuffix()}`);
+        const stack = await Stack.create(stackName, ws);
+
+        // Adding non-existent env should fail.
+        await assert.rejects(
+            stack.addEnvironments("non-existent-env"),
+            "stack.addEnvironments('non-existent-env') did not reject",
+        );
+
+        // Adding existing envs should succeed.
+        await stack.addEnvironments("automation-api-test-env", "automation-api-test-env-2");
+
+        const config = await stack.getAllConfig();
+        assert.strictEqual(config["node_env_test:new_key"].value, "test_value");
+        assert.strictEqual(config["node_env_test:also"].value, "business");
+
+        // Removing existing env should succeed.
+        await stack.removeEnvironment("automation-api-test-env");
+        const alsoConfig = await stack.getConfig("also");
+        assert.strictEqual(alsoConfig.value, "business");
+        await assert.rejects(stack.getConfig("new_key"), "stack.getConfig('new_key') did not reject");
+
+        await stack.removeEnvironment("automation-api-test-env-2");
+        await assert.rejects(stack.getConfig("also"), "stack.getConfig('also') did not reject");
+
+        await ws.removeStack(stackName);
+    });
     it(`Config`, async () => {
         const projectName = "node_test";
         const projectSettings: ProjectSettings = {
@@ -209,26 +248,114 @@ describe("LocalWorkspace", () => {
         assert.strictEqual(values2["config_flag_like:secret-key"].value, "-value2");
         assert.strictEqual(values2["config_flag_like:secret-key"].secret, true);
     });
+    it(`Config path`, async () => {
+        const projectName = "node_test";
+        const projectSettings: ProjectSettings = {
+            name: projectName,
+            runtime: "nodejs",
+        };
+        const ws = await LocalWorkspace.create({ projectSettings });
+        const stackName = fullyQualifiedStackName(getTestOrg(), projectName, `int_test${getTestSuffix()}`);
+        const stack = await Stack.create(stackName, ws);
+
+        // test backward compatibility
+        await stack.setConfig("key1", { value: "value1" });
+        // test new flag without subPath
+        await stack.setConfig("key2", { value: "value2" }, false);
+        // test new flag with subPath
+        await stack.setConfig("key3.subKey1", { value: "value3" }, true);
+        // test secret
+        await stack.setConfig("key4", { value: "value4", secret: true });
+        // test subPath and key as secret
+        await stack.setConfig("key5.subKey1", { value: "value5", secret: true }, true);
+        // test string with dots
+        await stack.setConfig("key6.subKey1", { value: "value6", secret: true });
+        // test string with dots
+        await stack.setConfig("key7.subKey1", { value: "value7", secret: true }, false);
+        // test subPath
+        await stack.setConfig("key7.subKey2", { value: "value8" }, true);
+        // test subPath
+        await stack.setConfig("key7.subKey3", { value: "value9" }, true);
+
+        // test backward compatibility
+        const cv1 = await stack.getConfig("key1");
+        assert.strictEqual(cv1.value, "value1");
+        assert.strictEqual(cv1.secret, false);
+
+        // test new flag without subPath
+        const cv2 = await stack.getConfig("key2", false);
+        assert.strictEqual(cv2.value, "value2");
+        assert.strictEqual(cv2.secret, false);
+
+        // test new flag with subPath
+        const cv3 = await stack.getConfig("key3.subKey1", true);
+        assert.strictEqual(cv3.value, "value3");
+        assert.strictEqual(cv3.secret, false);
+
+        // test secret
+        const cv4 = await stack.getConfig("key4");
+        assert.strictEqual(cv4.value, "value4");
+        assert.strictEqual(cv4.secret, true);
+
+        // test subPath and key as secret
+        const cv5 = await stack.getConfig("key5.subKey1", true);
+        assert.strictEqual(cv5.value, "value5");
+        assert.strictEqual(cv5.secret, true);
+
+        // test string with dots
+        const cv6 = await stack.getConfig("key6.subKey1");
+        assert.strictEqual(cv6.value, "value6");
+        assert.strictEqual(cv6.secret, true);
+
+        // test string with dots
+        const cv7 = await stack.getConfig("key7.subKey1", false);
+        assert.strictEqual(cv7.value, "value7");
+        assert.strictEqual(cv7.secret, true);
+
+        // test string with dots
+        const cv8 = await stack.getConfig("key7.subKey2", true);
+        assert.strictEqual(cv8.value, "value8");
+        assert.strictEqual(cv8.secret, false);
+
+        // test string with dots
+        const cv9 = await stack.getConfig("key7.subKey3", true);
+        assert.strictEqual(cv9.value, "value9");
+        assert.strictEqual(cv9.secret, false);
+
+        await stack.removeConfig("key1");
+        await stack.removeConfig("key2", false);
+        await stack.removeConfig("key3", false);
+        await stack.removeConfig("key4", false);
+        await stack.removeConfig("key5", false);
+        await stack.removeConfig("key6.subKey1", false);
+        await stack.removeConfig("key7.subKey1", false);
+
+        const cfg = await stack.getAllConfig();
+        assert.strictEqual(cfg["node_test:key7"].value, '{"subKey2":"value8","subKey3":"value9"}');
+
+        await ws.removeStack(stackName);
+    });
+    // This test requires the existence of a Pulumi.dev.yaml file because we are reading the nested
+    // config from the file. This means we can't remove the stack at the end of the test.
+    // We should also not include secrets in this config, because the secret encryption is only valid within
+    // the context of a stack and org, and running this test in different orgs will fail if there are secrets.
     it(`nested_config`, async () => {
-        if (getTestOrg() !== "pulumi-test") {
-            return;
-        }
         const stackName = fullyQualifiedStackName(getTestOrg(), "nested_config", "dev");
         const workDir = upath.joinSafe(__dirname, "data", "nested_config");
         const stack = await LocalWorkspace.createOrSelectStack({ stackName, workDir });
 
         const allConfig = await stack.getAllConfig();
         const outerVal = allConfig["nested_config:outer"];
-        assert.strictEqual(outerVal.secret, true);
-        assert.strictEqual(outerVal.value, '{"inner":"my_secret","other":"something_else"}');
+        assert.strictEqual(outerVal.secret, false);
+        assert.strictEqual(outerVal.value, '{"inner":"my_value","other":"something_else"}');
 
         const listVal = allConfig["nested_config:myList"];
         assert.strictEqual(listVal.secret, false);
         assert.strictEqual(listVal.value, '["one","two","three"]');
 
         const outer = await stack.getConfig("outer");
-        assert.strictEqual(outer.secret, true);
-        assert.strictEqual(outer.value, '{"inner":"my_secret","other":"something_else"}');
+        assert.strictEqual(outer.secret, false);
+        assert.strictEqual(outer.value, '{"inner":"my_value","other":"something_else"}');
 
         const list = await stack.getConfig("myList");
         assert.strictEqual(list.secret, false);
@@ -837,6 +964,22 @@ describe("LocalWorkspace", () => {
             await stack.workspace.removeStack(stackName);
         }
     });
+    it(`runs an inline program that exits gracefully`, async () => {
+        const program = async () => ({});
+        const projectName = "inline_node";
+        const stackName = fullyQualifiedStackName(getTestOrg(), projectName, `int_test${getTestSuffix()}`);
+        const stack = await LocalWorkspace.createStack({ stackName, projectName, program });
+
+        // pulumi up
+        await assert.doesNotReject(stack.up());
+
+        // pulumi destroy
+        const destroyRes = await stack.destroy();
+        assert.strictEqual(destroyRes.summary.kind, "destroy");
+        assert.strictEqual(destroyRes.summary.result, "succeeded");
+
+        await stack.workspace.removeStack(stackName);
+    });
     it(`runs an inline program that rejects a promise and exits gracefully`, async () => {
         const program = async () => {
             Promise.reject(new Error());
@@ -856,29 +999,24 @@ describe("LocalWorkspace", () => {
 
         await stack.workspace.removeStack(stackName);
     });
-    it(`detects inline programs with side by side pulumi and throws an error`, async () => {
+    it(`runs successfully after a previous failure`, async () => {
+        let shouldFail = true;
         const program = async () => {
-            // clear pulumi/pulumi from require cache
-            delete require.cache[require.resolve("../../runtime")];
-            delete require.cache[require.resolve("../../runtime/config")];
-            delete require.cache[require.resolve("../../runtime/settings")];
-            // load up a fresh instance of pulumi
-            const p1 = require("../../runtime/settings");
-            // do some work that happens to observe runtime options with the new instance
-            p1.monitorSupportsSecrets();
-            return {
-                // export an output from originally pulumi causing settings to be observed again (boom).
-                test: output("original_pulumi"),
-            };
+            if (shouldFail) {
+                Promise.reject(new Error());
+            }
+            return {};
         };
-        const projectName = "inline_node_sxs";
+        const projectName = "inline_node";
         const stackName = fullyQualifiedStackName(getTestOrg(), projectName, `int_test${getTestSuffix()}`);
         const stack = await LocalWorkspace.createStack({ stackName, projectName, program });
 
-        // pulumi up
-        await assert.rejects(stack.up(), (err: Error) => {
-            return err.stack!.indexOf("Detected multiple versions of '@pulumi/pulumi'") >= 0;
-        });
+        // pulumi up rejects the first time
+        await assert.rejects(stack.up());
+
+        // pulumi up succeeds the 2nd time
+        shouldFail = false;
+        await assert.doesNotReject(stack.up());
 
         // pulumi destroy
         const destroyRes = await stack.destroy();

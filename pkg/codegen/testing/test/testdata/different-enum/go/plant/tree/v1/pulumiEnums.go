@@ -78,12 +78,6 @@ func (o DiameterOutput) ToDiameterPtrOutputWithContext(ctx context.Context) Diam
 	}).(DiameterPtrOutput)
 }
 
-func (o DiameterOutput) ToOutput(ctx context.Context) pulumix.Output[Diameter] {
-	return pulumix.Output[Diameter]{
-		OutputState: o.OutputState,
-	}
-}
-
 func (o DiameterOutput) ToFloat64Output() pulumi.Float64Output {
 	return o.ToFloat64OutputWithContext(context.Background())
 }
@@ -119,12 +113,6 @@ func (o DiameterPtrOutput) ToDiameterPtrOutputWithContext(ctx context.Context) D
 	return o
 }
 
-func (o DiameterPtrOutput) ToOutput(ctx context.Context) pulumix.Output[*Diameter] {
-	return pulumix.Output[*Diameter]{
-		OutputState: o.OutputState,
-	}
-}
-
 func (o DiameterPtrOutput) Elem() DiameterOutput {
 	return o.ApplyT(func(v *Diameter) Diameter {
 		if v != nil {
@@ -149,10 +137,11 @@ func (o DiameterPtrOutput) ToFloat64PtrOutputWithContext(ctx context.Context) pu
 	}).(pulumi.Float64PtrOutput)
 }
 
-// DiameterInput is an input type that accepts DiameterArgs and DiameterOutput values.
-// You can construct a concrete instance of `DiameterInput` via:
+// DiameterInput is an input type that accepts values of the Diameter enum
+// A concrete instance of `DiameterInput` can be one of the following:
 //
-//	DiameterArgs{...}
+//	DiameterSixinch
+//	DiameterTwelveinch
 type DiameterInput interface {
 	pulumi.Input
 
@@ -199,6 +188,170 @@ const (
 	Farm_Pulumi_Planters_Inc_ = Farm("Pulumi Planters Inc.")
 	Farm_Plants_R_Us          = Farm("Plants'R'Us")
 )
+
+func (Farm) ElementType() reflect.Type {
+	return reflect.TypeOf((*Farm)(nil)).Elem()
+}
+
+func (e Farm) ToFarmOutput() FarmOutput {
+	return pulumi.ToOutput(e).(FarmOutput)
+}
+
+func (e Farm) ToFarmOutputWithContext(ctx context.Context) FarmOutput {
+	return pulumi.ToOutputWithContext(ctx, e).(FarmOutput)
+}
+
+func (e Farm) ToFarmPtrOutput() FarmPtrOutput {
+	return e.ToFarmPtrOutputWithContext(context.Background())
+}
+
+func (e Farm) ToFarmPtrOutputWithContext(ctx context.Context) FarmPtrOutput {
+	return Farm(e).ToFarmOutputWithContext(ctx).ToFarmPtrOutputWithContext(ctx)
+}
+
+func (e Farm) ToStringOutput() pulumi.StringOutput {
+	return pulumi.ToOutput(pulumi.String(e)).(pulumi.StringOutput)
+}
+
+func (e Farm) ToStringOutputWithContext(ctx context.Context) pulumi.StringOutput {
+	return pulumi.ToOutputWithContext(ctx, pulumi.String(e)).(pulumi.StringOutput)
+}
+
+func (e Farm) ToStringPtrOutput() pulumi.StringPtrOutput {
+	return pulumi.String(e).ToStringPtrOutputWithContext(context.Background())
+}
+
+func (e Farm) ToStringPtrOutputWithContext(ctx context.Context) pulumi.StringPtrOutput {
+	return pulumi.String(e).ToStringOutputWithContext(ctx).ToStringPtrOutputWithContext(ctx)
+}
+
+type FarmOutput struct{ *pulumi.OutputState }
+
+func (FarmOutput) ElementType() reflect.Type {
+	return reflect.TypeOf((*Farm)(nil)).Elem()
+}
+
+func (o FarmOutput) ToFarmOutput() FarmOutput {
+	return o
+}
+
+func (o FarmOutput) ToFarmOutputWithContext(ctx context.Context) FarmOutput {
+	return o
+}
+
+func (o FarmOutput) ToFarmPtrOutput() FarmPtrOutput {
+	return o.ToFarmPtrOutputWithContext(context.Background())
+}
+
+func (o FarmOutput) ToFarmPtrOutputWithContext(ctx context.Context) FarmPtrOutput {
+	return o.ApplyTWithContext(ctx, func(_ context.Context, v Farm) *Farm {
+		return &v
+	}).(FarmPtrOutput)
+}
+
+func (o FarmOutput) ToStringOutput() pulumi.StringOutput {
+	return o.ToStringOutputWithContext(context.Background())
+}
+
+func (o FarmOutput) ToStringOutputWithContext(ctx context.Context) pulumi.StringOutput {
+	return o.ApplyTWithContext(ctx, func(_ context.Context, e Farm) string {
+		return string(e)
+	}).(pulumi.StringOutput)
+}
+
+func (o FarmOutput) ToStringPtrOutput() pulumi.StringPtrOutput {
+	return o.ToStringPtrOutputWithContext(context.Background())
+}
+
+func (o FarmOutput) ToStringPtrOutputWithContext(ctx context.Context) pulumi.StringPtrOutput {
+	return o.ApplyTWithContext(ctx, func(_ context.Context, e Farm) *string {
+		v := string(e)
+		return &v
+	}).(pulumi.StringPtrOutput)
+}
+
+type FarmPtrOutput struct{ *pulumi.OutputState }
+
+func (FarmPtrOutput) ElementType() reflect.Type {
+	return reflect.TypeOf((**Farm)(nil)).Elem()
+}
+
+func (o FarmPtrOutput) ToFarmPtrOutput() FarmPtrOutput {
+	return o
+}
+
+func (o FarmPtrOutput) ToFarmPtrOutputWithContext(ctx context.Context) FarmPtrOutput {
+	return o
+}
+
+func (o FarmPtrOutput) Elem() FarmOutput {
+	return o.ApplyT(func(v *Farm) Farm {
+		if v != nil {
+			return *v
+		}
+		var ret Farm
+		return ret
+	}).(FarmOutput)
+}
+
+func (o FarmPtrOutput) ToStringPtrOutput() pulumi.StringPtrOutput {
+	return o.ToStringPtrOutputWithContext(context.Background())
+}
+
+func (o FarmPtrOutput) ToStringPtrOutputWithContext(ctx context.Context) pulumi.StringPtrOutput {
+	return o.ApplyTWithContext(ctx, func(_ context.Context, e *Farm) *string {
+		if e == nil {
+			return nil
+		}
+		v := string(*e)
+		return &v
+	}).(pulumi.StringPtrOutput)
+}
+
+// FarmInput is an input type that accepts values of the Farm enum
+// A concrete instance of `FarmInput` can be one of the following:
+//
+//	Farm_Pulumi_Planters_Inc_
+//	Farm_Plants_R_Us
+type FarmInput interface {
+	pulumi.Input
+
+	ToFarmOutput() FarmOutput
+	ToFarmOutputWithContext(context.Context) FarmOutput
+}
+
+var farmPtrType = reflect.TypeOf((**Farm)(nil)).Elem()
+
+type FarmPtrInput interface {
+	pulumi.Input
+
+	ToFarmPtrOutput() FarmPtrOutput
+	ToFarmPtrOutputWithContext(context.Context) FarmPtrOutput
+}
+
+type farmPtr string
+
+func FarmPtr(v string) FarmPtrInput {
+	return (*farmPtr)(&v)
+}
+
+func (*farmPtr) ElementType() reflect.Type {
+	return farmPtrType
+}
+
+func (in *farmPtr) ToFarmPtrOutput() FarmPtrOutput {
+	return pulumi.ToOutput(in).(FarmPtrOutput)
+}
+
+func (in *farmPtr) ToFarmPtrOutputWithContext(ctx context.Context) FarmPtrOutput {
+	return pulumi.ToOutputWithContext(ctx, in).(FarmPtrOutput)
+}
+
+func (in *farmPtr) ToOutput(ctx context.Context) pulumix.Output[*Farm] {
+	return pulumix.Output[*Farm]{
+		OutputState: in.ToFarmPtrOutputWithContext(ctx).OutputState,
+	}
+}
 
 // types of rubber trees
 type RubberTreeVariety string
@@ -272,12 +425,6 @@ func (o RubberTreeVarietyOutput) ToRubberTreeVarietyPtrOutputWithContext(ctx con
 	}).(RubberTreeVarietyPtrOutput)
 }
 
-func (o RubberTreeVarietyOutput) ToOutput(ctx context.Context) pulumix.Output[RubberTreeVariety] {
-	return pulumix.Output[RubberTreeVariety]{
-		OutputState: o.OutputState,
-	}
-}
-
 func (o RubberTreeVarietyOutput) ToStringOutput() pulumi.StringOutput {
 	return o.ToStringOutputWithContext(context.Background())
 }
@@ -313,12 +460,6 @@ func (o RubberTreeVarietyPtrOutput) ToRubberTreeVarietyPtrOutputWithContext(ctx 
 	return o
 }
 
-func (o RubberTreeVarietyPtrOutput) ToOutput(ctx context.Context) pulumix.Output[*RubberTreeVariety] {
-	return pulumix.Output[*RubberTreeVariety]{
-		OutputState: o.OutputState,
-	}
-}
-
 func (o RubberTreeVarietyPtrOutput) Elem() RubberTreeVarietyOutput {
 	return o.ApplyT(func(v *RubberTreeVariety) RubberTreeVariety {
 		if v != nil {
@@ -343,10 +484,12 @@ func (o RubberTreeVarietyPtrOutput) ToStringPtrOutputWithContext(ctx context.Con
 	}).(pulumi.StringPtrOutput)
 }
 
-// RubberTreeVarietyInput is an input type that accepts RubberTreeVarietyArgs and RubberTreeVarietyOutput values.
-// You can construct a concrete instance of `RubberTreeVarietyInput` via:
+// RubberTreeVarietyInput is an input type that accepts values of the RubberTreeVariety enum
+// A concrete instance of `RubberTreeVarietyInput` can be one of the following:
 //
-//	RubberTreeVarietyArgs{...}
+//	RubberTreeVarietyBurgundy
+//	RubberTreeVarietyRuby
+//	RubberTreeVarietyTineke
 type RubberTreeVarietyInput interface {
 	pulumi.Input
 
@@ -412,12 +555,6 @@ func (i RubberTreeVarietyArray) ToRubberTreeVarietyArrayOutputWithContext(ctx co
 	return pulumi.ToOutputWithContext(ctx, i).(RubberTreeVarietyArrayOutput)
 }
 
-func (i RubberTreeVarietyArray) ToOutput(ctx context.Context) pulumix.Output[[]RubberTreeVariety] {
-	return pulumix.Output[[]RubberTreeVariety]{
-		OutputState: i.ToRubberTreeVarietyArrayOutputWithContext(ctx).OutputState,
-	}
-}
-
 type RubberTreeVarietyArrayOutput struct{ *pulumi.OutputState }
 
 func (RubberTreeVarietyArrayOutput) ElementType() reflect.Type {
@@ -430,12 +567,6 @@ func (o RubberTreeVarietyArrayOutput) ToRubberTreeVarietyArrayOutput() RubberTre
 
 func (o RubberTreeVarietyArrayOutput) ToRubberTreeVarietyArrayOutputWithContext(ctx context.Context) RubberTreeVarietyArrayOutput {
 	return o
-}
-
-func (o RubberTreeVarietyArrayOutput) ToOutput(ctx context.Context) pulumix.Output[[]RubberTreeVariety] {
-	return pulumix.Output[[]RubberTreeVariety]{
-		OutputState: o.OutputState,
-	}
 }
 
 func (o RubberTreeVarietyArrayOutput) Index(i pulumi.IntInput) RubberTreeVarietyOutput {
@@ -512,12 +643,6 @@ func (o TreeSizeOutput) ToTreeSizePtrOutputWithContext(ctx context.Context) Tree
 	}).(TreeSizePtrOutput)
 }
 
-func (o TreeSizeOutput) ToOutput(ctx context.Context) pulumix.Output[TreeSize] {
-	return pulumix.Output[TreeSize]{
-		OutputState: o.OutputState,
-	}
-}
-
 func (o TreeSizeOutput) ToStringOutput() pulumi.StringOutput {
 	return o.ToStringOutputWithContext(context.Background())
 }
@@ -553,12 +678,6 @@ func (o TreeSizePtrOutput) ToTreeSizePtrOutputWithContext(ctx context.Context) T
 	return o
 }
 
-func (o TreeSizePtrOutput) ToOutput(ctx context.Context) pulumix.Output[*TreeSize] {
-	return pulumix.Output[*TreeSize]{
-		OutputState: o.OutputState,
-	}
-}
-
 func (o TreeSizePtrOutput) Elem() TreeSizeOutput {
 	return o.ApplyT(func(v *TreeSize) TreeSize {
 		if v != nil {
@@ -583,10 +702,12 @@ func (o TreeSizePtrOutput) ToStringPtrOutputWithContext(ctx context.Context) pul
 	}).(pulumi.StringPtrOutput)
 }
 
-// TreeSizeInput is an input type that accepts TreeSizeArgs and TreeSizeOutput values.
-// You can construct a concrete instance of `TreeSizeInput` via:
+// TreeSizeInput is an input type that accepts values of the TreeSize enum
+// A concrete instance of `TreeSizeInput` can be one of the following:
 //
-//	TreeSizeArgs{...}
+//	TreeSizeSmall
+//	TreeSizeMedium
+//	TreeSizeLarge
 type TreeSizeInput interface {
 	pulumi.Input
 
@@ -652,12 +773,6 @@ func (i TreeSizeMap) ToTreeSizeMapOutputWithContext(ctx context.Context) TreeSiz
 	return pulumi.ToOutputWithContext(ctx, i).(TreeSizeMapOutput)
 }
 
-func (i TreeSizeMap) ToOutput(ctx context.Context) pulumix.Output[map[string]TreeSize] {
-	return pulumix.Output[map[string]TreeSize]{
-		OutputState: i.ToTreeSizeMapOutputWithContext(ctx).OutputState,
-	}
-}
-
 type TreeSizeMapOutput struct{ *pulumi.OutputState }
 
 func (TreeSizeMapOutput) ElementType() reflect.Type {
@@ -672,12 +787,6 @@ func (o TreeSizeMapOutput) ToTreeSizeMapOutputWithContext(ctx context.Context) T
 	return o
 }
 
-func (o TreeSizeMapOutput) ToOutput(ctx context.Context) pulumix.Output[map[string]TreeSize] {
-	return pulumix.Output[map[string]TreeSize]{
-		OutputState: o.OutputState,
-	}
-}
-
 func (o TreeSizeMapOutput) MapIndex(k pulumi.StringInput) TreeSizeOutput {
 	return pulumi.All(o, k).ApplyT(func(vs []interface{}) TreeSize {
 		return vs[0].(map[string]TreeSize)[vs[1].(string)]
@@ -687,6 +796,8 @@ func (o TreeSizeMapOutput) MapIndex(k pulumi.StringInput) TreeSizeOutput {
 func init() {
 	pulumi.RegisterInputType(reflect.TypeOf((*DiameterInput)(nil)).Elem(), Diameter(6))
 	pulumi.RegisterInputType(reflect.TypeOf((*DiameterPtrInput)(nil)).Elem(), Diameter(6))
+	pulumi.RegisterInputType(reflect.TypeOf((*FarmInput)(nil)).Elem(), Farm("Pulumi Planters Inc."))
+	pulumi.RegisterInputType(reflect.TypeOf((*FarmPtrInput)(nil)).Elem(), Farm("Pulumi Planters Inc."))
 	pulumi.RegisterInputType(reflect.TypeOf((*RubberTreeVarietyInput)(nil)).Elem(), RubberTreeVariety("Burgundy"))
 	pulumi.RegisterInputType(reflect.TypeOf((*RubberTreeVarietyPtrInput)(nil)).Elem(), RubberTreeVariety("Burgundy"))
 	pulumi.RegisterInputType(reflect.TypeOf((*RubberTreeVarietyArrayInput)(nil)).Elem(), RubberTreeVarietyArray{})
@@ -695,6 +806,8 @@ func init() {
 	pulumi.RegisterInputType(reflect.TypeOf((*TreeSizeMapInput)(nil)).Elem(), TreeSizeMap{})
 	pulumi.RegisterOutputType(DiameterOutput{})
 	pulumi.RegisterOutputType(DiameterPtrOutput{})
+	pulumi.RegisterOutputType(FarmOutput{})
+	pulumi.RegisterOutputType(FarmPtrOutput{})
 	pulumi.RegisterOutputType(RubberTreeVarietyOutput{})
 	pulumi.RegisterOutputType(RubberTreeVarietyPtrOutput{})
 	pulumi.RegisterOutputType(RubberTreeVarietyArrayOutput{})

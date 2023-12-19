@@ -20,6 +20,8 @@ import (
 	"fmt"
 	"os"
 
+	mapset "github.com/deckarep/golang-set/v2"
+
 	"github.com/spf13/cobra"
 
 	"github.com/pulumi/pulumi/pkg/v3/backend"
@@ -141,7 +143,7 @@ func newDestroyCmd() *cobra.Command {
 				}
 
 				err = validateUnsupportedRemoteFlags(false, nil, false, "", jsonDisplay, nil,
-					nil, refresh, showConfig, showReplacementSteps, showSames, false,
+					nil, refresh, showConfig, false, showReplacementSteps, showSames, false,
 					suppressOutputs, "default", targets, nil, nil,
 					targetDependents, "", stackConfigFile)
 				if err != nil {
@@ -216,9 +218,19 @@ func newDestroyCmd() *cobra.Command {
 			if err != nil {
 				return result.FromError(fmt.Errorf("getting stack decrypter: %w", err))
 			}
+			encrypter, err := sm.Encrypter()
+			if err != nil {
+				return result.FromError(fmt.Errorf("getting stack encrypter: %w", err))
+			}
 
 			stackName := s.Ref().Name().String()
-			configError := workspace.ValidateStackConfigAndApplyProjectConfig(stackName, proj, cfg.Config, decrypter)
+			configError := workspace.ValidateStackConfigAndApplyProjectConfig(
+				stackName,
+				proj,
+				cfg.Environment,
+				cfg.Config,
+				encrypter,
+				decrypter)
 			if configError != nil {
 				return result.FromError(fmt.Errorf("validating stack config: %w", configError))
 			}
@@ -411,16 +423,16 @@ func separateProtected(resources []*resource.State) (
 	/*unprotected*/ []*resource.State /*protected*/, []*resource.State,
 ) {
 	dg := graph.NewDependencyGraph(resources)
-	transitiveProtected := graph.ResourceSet{}
+	transitiveProtected := mapset.NewSet[*resource.State]()
 	for _, r := range resources {
 		if r.Protect {
 			rProtected := dg.TransitiveDependenciesOf(r)
-			rProtected[r] = true
-			transitiveProtected.UnionWith(rProtected)
+			rProtected.Add(r)
+			transitiveProtected = transitiveProtected.Union(rProtected)
 		}
 	}
-	allResources := graph.NewResourceSetFromArray(resources)
-	return allResources.SetMinus(transitiveProtected).ToArray(), transitiveProtected.ToArray()
+	allResources := mapset.NewSet(resources...)
+	return allResources.Difference(transitiveProtected).ToSlice(), transitiveProtected.ToSlice()
 }
 
 // Returns the number of protected resources that remain. Appends all unprotected resources to `targetUrns`.

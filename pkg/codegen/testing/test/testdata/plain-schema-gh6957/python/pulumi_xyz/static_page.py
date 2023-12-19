@@ -6,7 +6,7 @@ import copy
 import warnings
 import pulumi
 import pulumi.runtime
-from typing import Any, Callable, Mapping, Optional, Sequence, Union, overload
+from typing import Any, Mapping, Optional, Sequence, Union, overload
 from . import _utilities
 from ._inputs import *
 import pulumi_aws
@@ -22,20 +22,9 @@ class StaticPageArgs:
         The set of arguments for constructing a StaticPage resource.
         :param pulumi.Input[str] index_content: The HTML content for index.html.
         """
-        StaticPageArgs._configure(
-            lambda key, value: pulumi.set(__self__, key, value),
-            index_content=index_content,
-            foo=foo,
-        )
-    @staticmethod
-    def _configure(
-             _setter: Callable[[Any, Any], None],
-             index_content: pulumi.Input[str],
-             foo: Optional['FooArgs'] = None,
-             opts: Optional[pulumi.ResourceOptions]=None):
-        _setter("index_content", index_content)
+        pulumi.set(__self__, "index_content", index_content)
         if foo is not None:
-            _setter("foo", foo)
+            pulumi.set(__self__, "foo", foo)
 
     @property
     @pulumi.getter(name="indexContent")
@@ -91,10 +80,6 @@ class StaticPage(pulumi.ComponentResource):
         if resource_args is not None:
             __self__._internal_init(resource_name, opts, **resource_args.__dict__)
         else:
-            kwargs = kwargs or {}
-            def _setter(key, value):
-                kwargs[key] = value
-            StaticPageArgs._configure(_setter, **kwargs)
             __self__._internal_init(resource_name, *args, **kwargs)
 
     def _internal_init(__self__,
@@ -113,11 +98,6 @@ class StaticPage(pulumi.ComponentResource):
                 raise TypeError('__props__ is only valid when passed in combination with a valid opts.id to get an existing resource')
             __props__ = StaticPageArgs.__new__(StaticPageArgs)
 
-            if foo is not None and not isinstance(foo, FooArgs):
-                foo = foo or {}
-                def _setter(key, value):
-                    foo[key] = value
-                FooArgs._configure(_setter, **foo)
             __props__.__dict__["foo"] = foo
             if index_content is None and not opts.urn:
                 raise TypeError("Missing required property 'index_content'")

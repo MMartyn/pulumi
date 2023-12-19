@@ -24,6 +24,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pulumi/pulumi/sdk/v3/go/common/env"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/util/retry"
 
 	"github.com/pulumi/pulumi/pkg/v3/engine"
@@ -38,7 +39,6 @@ import (
 	"github.com/pulumi/pulumi/sdk/v3/go/common/apitype"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/encoding"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource/config"
-	"github.com/pulumi/pulumi/sdk/v3/go/common/util/cmdutil"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/util/contract"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/util/logging"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/workspace"
@@ -176,9 +176,9 @@ func (b *localBackend) getSnapshot(ctx context.Context,
 	}
 
 	// Ensure the snapshot passes verification before returning it, to catch bugs early.
-	if !DisableIntegrityChecking {
-		if verifyerr := snapshot.VerifyIntegrity(); verifyerr != nil {
-			return nil, fmt.Errorf("snapshot integrity failure; refusing to use it: %w", verifyerr)
+	if !backend.DisableIntegrityChecking {
+		if err := snapshot.VerifyIntegrity(); err != nil {
+			return nil, fmt.Errorf("snapshot integrity failure; refusing to use it: %w", err)
 		}
 	}
 
@@ -281,7 +281,7 @@ func (b *localBackend) saveCheckpoint(
 	logging.V(7).Infof("Saved stack %s checkpoint to: %s (backup=%s)", ref.FullyQualifiedName(), file, backupFile)
 
 	// And if we are retaining historical checkpoint information, write it out again
-	if cmdutil.IsTruthy(b.Getenv(PulumiFilestateRetainCheckpoints)) {
+	if b.Env.GetBool(env.SelfManagedRetainCheckpoints) {
 		if err = b.bucket.WriteAll(ctx, fmt.Sprintf("%v.%v", file, time.Now().UnixNano()), byts, nil); err != nil {
 			return backupFile, "", fmt.Errorf("An IO error occurred while writing the new snapshot file: %w", err)
 		}
@@ -306,7 +306,7 @@ func (b *localBackend) saveStack(
 		return "", err
 	}
 
-	if !DisableIntegrityChecking {
+	if !backend.DisableIntegrityChecking {
 		// Finally, *after* writing the checkpoint, check the integrity.  This is done afterwards so that we write
 		// out the checkpoint file since it may contain resource state updates.  But we will warn the user that the
 		// file is already written and might be bad.
@@ -358,7 +358,7 @@ func (b *localBackend) backupStack(ctx context.Context, ref *localBackendReferen
 	contract.Requiref(ref != nil, "ref", "must not be nil")
 
 	// Exit early if backups are disabled.
-	if cmdutil.IsTruthy(b.Getenv(PulumiFilestateDisableCheckpointBackups)) {
+	if b.Env.GetBool(env.SelfManagedDisableCheckpointBackups) {
 		return nil
 	}
 

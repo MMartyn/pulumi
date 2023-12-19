@@ -16,7 +16,7 @@ package deploytest
 
 import (
 	"context"
-	"fmt"
+	"errors"
 
 	"github.com/blang/semver"
 	uuid "github.com/gofrs/uuid"
@@ -52,8 +52,9 @@ type Provider struct {
 		preview bool) (resource.ID, resource.PropertyMap, resource.Status, error)
 	UpdateF func(urn resource.URN, id resource.ID, oldInputs, oldOutputs, newInputs resource.PropertyMap, timeout float64,
 		ignoreChanges []string, preview bool) (resource.PropertyMap, resource.Status, error)
-	DeleteF func(urn resource.URN, id resource.ID, olds resource.PropertyMap, timeout float64) (resource.Status, error)
-	ReadF   func(urn resource.URN, id resource.ID,
+	DeleteF func(urn resource.URN, id resource.ID,
+		oldInputs, oldOutputs resource.PropertyMap, timeout float64) (resource.Status, error)
+	ReadF func(urn resource.URN, id resource.ID,
 		inputs, state resource.PropertyMap) (plugin.ReadResult, resource.Status, error)
 
 	ConstructF func(monitor *ResourceMonitor, typ, name string, parent resource.URN, inputs resource.PropertyMap,
@@ -172,12 +173,12 @@ func (prov *Provider) Update(urn resource.URN, id resource.ID, oldInputs, oldOut
 }
 
 func (prov *Provider) Delete(urn resource.URN,
-	id resource.ID, props resource.PropertyMap, timeout float64,
+	id resource.ID, oldInputs, oldOutputs resource.PropertyMap, timeout float64,
 ) (resource.Status, error) {
 	if prov.DeleteF == nil {
 		return resource.StatusOK, nil
 	}
-	return prov.DeleteF(urn, id, props, timeout)
+	return prov.DeleteF(urn, id, oldInputs, oldOutputs, timeout)
 }
 
 func (prov *Provider) Read(urn resource.URN, id resource.ID,
@@ -194,7 +195,7 @@ func (prov *Provider) Read(urn resource.URN, id resource.ID,
 	return prov.ReadF(urn, id, inputs, state)
 }
 
-func (prov *Provider) Construct(info plugin.ConstructInfo, typ tokens.Type, name tokens.QName, parent resource.URN,
+func (prov *Provider) Construct(info plugin.ConstructInfo, typ tokens.Type, name string, parent resource.URN,
 	inputs resource.PropertyMap, options plugin.ConstructOptions,
 ) (plugin.ConstructResult, error) {
 	if prov.ConstructF == nil {
@@ -204,7 +205,7 @@ func (prov *Provider) Construct(info plugin.ConstructInfo, typ tokens.Type, name
 	if err != nil {
 		return plugin.ConstructResult{}, err
 	}
-	return prov.ConstructF(monitor, string(typ), string(name), parent, inputs, info, options)
+	return prov.ConstructF(monitor, string(typ), name, parent, inputs, info, options)
 }
 
 func (prov *Provider) Invoke(tok tokens.ModuleMember,
@@ -220,7 +221,7 @@ func (prov *Provider) StreamInvoke(
 	tok tokens.ModuleMember, args resource.PropertyMap,
 	onNext func(resource.PropertyMap) error,
 ) ([]plugin.CheckFailure, error) {
-	return nil, fmt.Errorf("not implemented")
+	return nil, errors.New("not implemented")
 }
 
 func (prov *Provider) Call(tok tokens.ModuleMember, args resource.PropertyMap, info plugin.CallInfo,

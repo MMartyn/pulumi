@@ -1,4 +1,20 @@
+// Copyright 2016-2023, Pulumi Corporation.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package display
+
+// Note: to regenerate the baselines for these tests, run `go test` with `PULUMI_ACCEPT=true`.
 
 import (
 	"bytes"
@@ -14,6 +30,7 @@ import (
 	"github.com/pulumi/pulumi/sdk/v3/go/common/diag"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/diag/colors"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource"
+	"github.com/pulumi/pulumi/sdk/v3/go/common/tokens"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/util/cmdutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -46,18 +63,20 @@ func testProgressEvents(t *testing.T, path string, accept, interactive bool, wid
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 
-	go ShowProgressEvents("test", "update", "stack", "project", "link", eventChannel, doneChannel, Options{
-		IsInteractive:        interactive,
-		Color:                colors.Raw,
-		ShowConfig:           true,
-		ShowReplacementSteps: true,
-		ShowSameResources:    true,
-		ShowReads:            true,
-		Stdout:               &stdout,
-		Stderr:               &stderr,
-		term:                 terminal.NewMockTerminal(&stdout, width, height, true),
-		deterministicOutput:  true,
-	}, false)
+	go ShowProgressEvents(
+		"test", "update", tokens.MustParseStackName("stack"), "project", "link", eventChannel, doneChannel,
+		Options{
+			IsInteractive:        interactive,
+			Color:                colors.Raw,
+			ShowConfig:           true,
+			ShowReplacementSteps: true,
+			ShowSameResources:    true,
+			ShowReads:            true,
+			Stdout:               &stdout,
+			Stderr:               &stderr,
+			term:                 terminal.NewMockTerminal(&stdout, width, height, true),
+			deterministicOutput:  true,
+		}, false)
 
 	for _, e := range events {
 		eventChannel <- e
@@ -231,4 +250,34 @@ func TestPrintDiagnosticsIsTolerantOfDiagnostics(t *testing.T) {
 			assert.Equal(t, tt.want, got, "printDiagnostics(%v) = %v, want %v", tt.give, got, tt.want)
 		})
 	}
+}
+
+func TestProgressPolicyPacks(t *testing.T) {
+	t.Parallel()
+	eventChannel, doneChannel := make(chan engine.Event), make(chan bool)
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	go ShowProgressEvents(
+		"test", "update", tokens.MustParseStackName("stack"), "project", "link", eventChannel, doneChannel,
+		Options{
+			IsInteractive:        true,
+			Color:                colors.Raw,
+			ShowConfig:           true,
+			ShowReplacementSteps: true,
+			ShowSameResources:    true,
+			ShowReads:            true,
+			Stdout:               &stdout,
+			Stderr:               &stderr,
+			term:                 terminal.NewMockTerminal(&stdout, 80, 24, true),
+			deterministicOutput:  true,
+		}, false)
+
+	// Send policy pack event to the channel
+	eventChannel <- engine.NewEvent(engine.PolicyLoadEventPayload{})
+	close(eventChannel)
+	<-doneChannel
+
+	assert.Contains(t, stdout.String(), "Loading policy packs...")
 }

@@ -16,13 +16,12 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 
-	survey "github.com/AlecAivazis/survey/v2"
-	surveycore "github.com/AlecAivazis/survey/v2/core"
 	"github.com/google/shlex"
 	"github.com/pulumi/pulumi/pkg/v3/backend"
 	"github.com/pulumi/pulumi/pkg/v3/backend/display"
@@ -138,7 +137,7 @@ func (cmd *stateEditCmd) Run(s backend.Stack) error {
 		return err
 	}
 	if snap == nil {
-		return fmt.Errorf("old snapshot expected to be non-nil")
+		return errors.New("old snapshot expected to be non-nil")
 	}
 
 	sf := &jsonSnapshotEncoder{
@@ -186,7 +185,7 @@ func (cmd *stateEditCmd) Run(s backend.Stack) error {
 			}
 		}
 
-		switch response := cmd.promptStateEdit(msg, options, edit); response {
+		switch response := promptUser(msg, options, edit, cmd.Colorizer); response {
 		case accept:
 			return saveSnapshot(cmd.Ctx, s, news, false /* force */)
 		case edit:
@@ -197,28 +196,9 @@ func (cmd *stateEditCmd) Run(s backend.Stack) error {
 			}
 			continue
 		default:
-			return fmt.Errorf("confirmation cancelled, not proceeding with the state edit")
+			return errors.New("confirmation cancelled, not proceeding with the state edit")
 		}
 	}
-}
-
-func (cmd *stateEditCmd) promptStateEdit(msg string, options []string, defaultOption string) string {
-	prompt := "\b" + cmd.Colorizer.Colorize(colors.SpecPrompt+msg+colors.Reset)
-	surveycore.DisableColor = true
-	surveyIcons := survey.WithIcons(func(icons *survey.IconSet) {
-		icons.Question = survey.Icon{}
-		icons.SelectFocus = survey.Icon{Text: cmd.Colorizer.Colorize(colors.BrightGreen + ">" + colors.Reset)}
-	})
-
-	var response string
-	if err := survey.AskOne(&survey.Select{
-		Message: prompt,
-		Options: options,
-		Default: defaultOption,
-	}, &response, surveyIcons); err != nil {
-		return ""
-	}
-	return response
 }
 
 func (cmd *stateEditCmd) validateAndPrintState(f *snapshotBuffer) (*deploy.Snapshot, error) {
@@ -252,7 +232,7 @@ func (cmd *stateEditCmd) validateAndPrintState(f *snapshotBuffer) (*deploy.Snaps
 func openInEditor(filename string) error {
 	editor := os.Getenv("EDITOR")
 	if editor == "" {
-		return fmt.Errorf("no EDITOR environment variable set")
+		return errors.New("no EDITOR environment variable set")
 	}
 	return openInEditorInternal(editor, filename)
 }

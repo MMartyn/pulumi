@@ -28,10 +28,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pulumi/pulumi/pkg/v3/backend/filestate"
 	"github.com/pulumi/pulumi/pkg/v3/resource/stack"
 	"github.com/pulumi/pulumi/pkg/v3/testing/integration"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/apitype"
+	"github.com/pulumi/pulumi/sdk/v3/go/common/env"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/slice"
 	ptesting "github.com/pulumi/pulumi/sdk/v3/go/common/testing"
@@ -95,16 +95,18 @@ func TestStackCommands(t *testing.T) {
 		stacks, current := integration.GetStacks(e)
 		if current == nil {
 			t.Fatalf("No stack was labeled as current among: %v", stacks)
+		} else {
+			assert.Equal(t, "lothric", *current)
 		}
-		assert.Equal(t, "lothric", *current)
 
 		// Select works
 		e.RunCommand("pulumi", "stack", "select", "blighttown")
 		stacks, current = integration.GetStacks(e)
 		if current == nil {
 			t.Fatalf("No stack was labeled as current among: %v", stacks)
+		} else {
+			assert.Equal(t, "blighttown", *current)
 		}
-		assert.Equal(t, "blighttown", *current)
 
 		// Error
 		out, err := e.RunCommandExpectError("pulumi", "stack", "select", "anor-londo")
@@ -130,17 +132,19 @@ func TestStackCommands(t *testing.T) {
 		stacks, current := integration.GetStacks(e)
 		if current == nil {
 			t.Fatalf("No stack was labeled as current among: %v", stacks)
+		} else {
+			assert.Equal(t, "second", *current)
 		}
-		assert.Equal(t, "second", *current)
 
 		// Specifying `--no-select` prevents selection.
 		e.RunCommand("pulumi", "stack", "init", "third", "--no-select")
 		stacks, current = integration.GetStacks(e)
 		if current == nil {
 			t.Fatalf("No stack was labeled as current among: %v", stacks)
+		} else {
+			// "second" should still be selected.
+			assert.Equal(t, "second", *current)
 		}
-		// "second" should still be selected.
-		assert.Equal(t, "second", *current)
 
 		assert.Equal(t, 3, len(stacks))
 		assert.Contains(t, stacks, "first")
@@ -167,8 +171,9 @@ func TestStackCommands(t *testing.T) {
 		stacks, current := integration.GetStacks(e)
 		if current == nil {
 			t.Fatalf("No stack was labeled as current among: %v", stacks)
+		} else {
+			assert.Equal(t, "two", *current)
 		}
-		assert.Equal(t, "two", *current)
 
 		e.RunCommand("pulumi", "stack", "unselect")
 		_, updatedCurrentStack := integration.GetStacks(e)
@@ -361,9 +366,10 @@ func TestStackBackups(t *testing.T) {
 		e.ImportDirectory("integration/stack_outputs/nodejs")
 
 		// We're testing that backups are created so ensure backups aren't disabled.
-		if env := os.Getenv(filestate.PulumiFilestateDisableCheckpointBackups); env != "" {
-			os.Unsetenv(filestate.PulumiFilestateDisableCheckpointBackups)
-			defer os.Setenv(filestate.PulumiFilestateDisableCheckpointBackups, env)
+		disableCheckpointBackups := env.SelfManagedDisableCheckpointBackups.Var().Name()
+		if env := os.Getenv(disableCheckpointBackups); env != "" {
+			os.Unsetenv(disableCheckpointBackups)
+			defer os.Setenv(disableCheckpointBackups, env)
 		}
 
 		const stackName = "imulup"
@@ -676,8 +682,9 @@ func TestLocalStateGzip(t *testing.T) { //nolint:paralleltest
 	e.RunCommand("pulumi", "up", "--non-interactive", "--yes", "--skip-preview")
 
 	assertGzipFileFormat, assertPlainFileFormat := stackFileFormatAsserters(t, e, "stack_dependencies", stackName)
-	switchGzipOff := func() { e.Setenv(filestate.PulumiFilestateGzipEnvVar, "0") }
-	switchGzipOn := func() { e.Setenv(filestate.PulumiFilestateGzipEnvVar, "1") }
+	gzipEnvVar := env.SelfManagedGzip.Var().Name()
+	switchGzipOff := func() { e.Setenv(gzipEnvVar, "0") }
+	switchGzipOn := func() { e.Setenv(gzipEnvVar, "1") }
 	pulumiUp := func() { e.RunCommand("pulumi", "up", "--non-interactive", "--yes", "--skip-preview") }
 
 	// Test "pulumi up" with gzip compression on and off.
@@ -809,7 +816,9 @@ func TestStackTags(t *testing.T) {
 	e.RunCommand("pulumi", "up", "--non-interactive", "--yes", "--skip-preview")
 
 	tags = lsTags()
-	assert.Equal(t, "projectValue", tags["projectTag"], "projectTag should be set to projectValue")
+	assert.Equal(t, "hello", tags["tagS"], "tagS should be set to hello")
+	assert.Equal(t, "true", tags["tagB"], "tagB should be set to true")
+	assert.Equal(t, "42", tags["tagN"], "tagN should be set to 42")
 }
 
 //nolint:paralleltest // pulumi new is not parallel safe

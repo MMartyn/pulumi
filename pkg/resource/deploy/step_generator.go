@@ -16,9 +16,12 @@ package deploy
 
 import (
 	cryptorand "crypto/rand"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
+
+	mapset "github.com/deckarep/golang-set/v2"
 
 	"github.com/pulumi/pulumi/pkg/v3/resource/deploy/providers"
 	"github.com/pulumi/pulumi/pkg/v3/resource/graph"
@@ -68,11 +71,14 @@ type stepGenerator struct {
 	aliased map[resource.URN]resource.URN
 	// a map from current URN of the resource to the old URN that it was aliased from.
 	aliases map[resource.URN]resource.URN
+
+	// targetsActual is the set of targets explicitly targeted by the engine, this can be different from opts.targets if
+	// --target-dependents is true. This does _not_ include resources that have been implicitly targeted, like providers.
+	targetsActual UrnTargets
 }
 
 // isTargetedForUpdate returns if `res` is targeted for update. The function accommodates
-// `--target-dependents`. `targetDependentsForUpdate` should probably be called if this function
-// returns true.
+// `--target-dependents`.
 func (sg *stepGenerator) isTargetedForUpdate(res *resource.State) bool {
 	if sg.opts.Targets.Contains(res.URN) {
 		return true
@@ -84,20 +90,18 @@ func (sg *stepGenerator) isTargetedForUpdate(res *resource.State) bool {
 		proivderRef, err := providers.ParseReference(ref)
 		contract.AssertNoErrorf(err, "failed to parse provider reference: %v", ref)
 		providerURN := proivderRef.URN()
-		// We don't follow default provider dependents, as default providers are internally managed and are
-		// always targeted. See https://github.com/pulumi/pulumi/issues/13557 for context of what happens if
-		// we do follow these.
-		if !providers.IsDefaultProvider(providerURN) && sg.opts.Targets.Contains(providerURN) {
+		if sg.targetsActual.Contains(providerURN) {
 			return true
 		}
 	}
+
 	if res.Parent != "" {
-		if sg.opts.Targets.Contains(res.Parent) {
+		if sg.targetsActual.Contains(res.Parent) {
 			return true
 		}
 	}
 	for _, dep := range res.Dependencies {
-		if dep != "" && sg.opts.Targets.Contains(dep) {
+		if dep != "" && sg.targetsActual.Contains(dep) {
 			return true
 		}
 	}
@@ -116,46 +120,38 @@ func (sg *stepGenerator) Errored() bool {
 // if there is one.
 func (sg *stepGenerator) checkParent(parent resource.URN, resourceType tokens.Type) (resource.URN, error) {
 	// Some goal settings are based on the parent settings so make sure our parent is correct.
-	if resourceType == resource.RootStackType {
-		// The RootStack must not have a parent set
-		if parent != "" {
-			return "", fmt.Errorf("root stack resource can not have a parent (tried to set it to %v)", parent)
+
+	// TODO(fraser): I think every resource but the RootStack should have a parent, however currently a
+	// number of our tests do not create a RootStack resource, feels odd that it's possible for the engine
+	// to run without a RootStack resource. I feel this ought to be fixed by making the engine always
+	// create the RootStack before running the user program, however that leaves some questions of what to
+	// do if we ever support changing any of the settings (such as the provider map) on the RootStack
+	// resource. For now we set it to the root stack if we can find it, but we don't error on blank parents
+
+	// If it is set check the parent exists.
+	if parent != "" {
+		// The parent for this resource hasn't been registered yet. That's an error and we can't continue.
+		if _, hasParent := sg.urns[parent]; !hasParent {
+			return "", fmt.Errorf("could not find parent resource %v", parent)
 		}
-	} else {
-		// For other resources they may or may not have a parent.
-		//
-		// TODO(fraser): I think every resource but the RootStack should have a parent, however currently a
-		// number of our tests do not create a RootStack resource, feels odd that it's possible for the engine
-		// to run without a RootStack resource. I feel this ought to be fixed by making the engine always
-		// create the RootStack before running the user program, however that leaves some questions of what to
-		// do if we ever support changing any of the settings (such as the provider map) on the RootStack
-		// resource. For now we set it to the root stack if we can find it, but we don't error on blank parents
+	} else { //nolint:staticcheck // https://github.com/pulumi/pulumi/issues/10950
+		// Else try and set it to the root stack
 
-		// If it is set check the parent exists.
-		if parent != "" {
-			// The parent for this resource hasn't been registered yet. That's an error and we can't continue.
-			if _, hasParent := sg.urns[parent]; !hasParent {
-				return "", fmt.Errorf("could not find parent resource %v", parent)
-			}
-		} else { //nolint:staticcheck // https://github.com/pulumi/pulumi/issues/10950
-			// Else try and set it to the root stack
+		// TODO: It looks like this currently has some issues with state ordering (see
+		// https://github.com/pulumi/pulumi/issues/10950). Best I can guess is the stack resource is
+		// hitting the step generator and so saving it's URN to sg.urns and issuing a Create step but not
+		// actually getting to writing it's state to the snapshot. Then in parallel with this something
+		// else is causing a pulumi:providers:pulumi default provider to be created, this picks up the
+		// stack URN from sg.urns and so sets it's parent automatically, but then races the step executor
+		// to write itself to state before the stack resource manages to. Long term we want to ensure
+		// there's always a stack resource present, and so that all resources (except the stack) have a
+		// parent (this will save us some work in each SDK), but for now lets just turn this support off.
 
-			// TODO: It looks like this currently has some issues with state ordering (see
-			// https://github.com/pulumi/pulumi/issues/10950). Best I can guess is the stack resource is
-			// hitting the step generator and so saving it's URN to sg.urns and issuing a Create step but not
-			// actually getting to writing it's state to the snapshot. Then in parallel with this something
-			// else is causing a pulumi:providers:pulumi default provider to be created, this picks up the
-			// stack URN from sg.urns and so sets it's parent automatically, but then races the step executor
-			// to write itself to state before the stack resource manages to. Long term we want to ensure
-			// there's always a stack resource present, and so that all resources (except the stack) have a
-			// parent (this will save us some work in each SDK), but for now lets just turn this support off.
-
-			//for urn := range sg.urns {
-			//	if urn.Type() == resource.RootStackType {
-			//		return urn, nil
-			//	}
-			//}
-		}
+		//for urn := range sg.urns {
+		//	if urn.Type() == resource.RootStackType {
+		//		return urn, nil
+		//	}
+		//}
 	}
 
 	return parent, nil
@@ -169,7 +165,7 @@ func (sg *stepGenerator) bailDaig(diag *diag.Diag, args ...interface{}) error {
 
 // generateURN generates a URN for a new resource and confirms we haven't seen it before in this deployment.
 func (sg *stepGenerator) generateURN(
-	parent resource.URN, ty tokens.Type, name tokens.QName,
+	parent resource.URN, ty tokens.Type, name string,
 ) (resource.URN, error) {
 	// Generate a URN for this new resource, confirm we haven't seen it before in this deployment.
 	urn := sg.deployment.generateURN(parent, ty, name)
@@ -326,7 +322,22 @@ func (sg *stepGenerator) GenerateSteps(event RegisterResourceEvent) ([]Step, err
 			continue
 		}
 
-		for _, urn := range step.New().Dependencies {
+		// Check direct dependencies but also parents and providers.
+		dependencies := step.New().Dependencies
+		if step.New().Parent != "" {
+			dependencies = append(dependencies, step.New().Parent)
+		}
+		if step.New().Provider != "" {
+			prov, err := providers.ParseReference(step.New().Provider)
+			if err != nil {
+				return nil, fmt.Errorf(
+					"could not parse provider reference %s for %s: %w",
+					step.New().Provider, step.New().URN, err)
+			}
+			dependencies = append(dependencies, prov.URN())
+		}
+
+		for _, urn := range dependencies {
 			if sg.skippedCreates[urn] {
 				// Targets were specified, but didn't include this resource to create.  And a
 				// resource we are producing a step for does depend on this created resource.
@@ -364,7 +375,7 @@ func (sg *stepGenerator) collapseAliasToUrn(goal *resource.Goal, alias resource.
 
 	n := alias.Name
 	if n == "" {
-		n = string(goal.Name)
+		n = goal.Name
 	}
 	t := alias.Type
 	if t == "" {
@@ -380,7 +391,7 @@ func (sg *stepGenerator) collapseAliasToUrn(goal *resource.Goal, alias resource.
 			parent = parentAlias
 		}
 	}
-	parentIsRootStack := parent != "" && parent.Type() == resource.RootStackType
+	parentIsRootStack := parent != "" && parent.QualifiedType() == resource.RootStackType
 	if alias.NoParent || parentIsRootStack {
 		parent = ""
 	}
@@ -402,7 +413,7 @@ func (sg *stepGenerator) collapseAliasToUrn(goal *resource.Goal, alias resource.
 // from the name of the parent, and the parent name changed.
 func (sg *stepGenerator) inheritedChildAlias(
 	childType tokens.Type,
-	childName, parentName tokens.QName,
+	childName, parentName string,
 	parentAlias resource.URN,
 ) resource.URN {
 	// If the child name has the parent name as a prefix, then we make the assumption that
@@ -419,10 +430,8 @@ func (sg *stepGenerator) inheritedChildAlias(
 	// * childAlias: "urn:pulumi:stackname::projectname::aws:s3/bucket:Bucket::app-function"
 
 	aliasName := childName
-	if strings.HasPrefix(childName.String(), parentName.String()) {
-		aliasName = tokens.QName(
-			parentAlias.Name().String() +
-				strings.TrimPrefix(childName.String(), parentName.String()))
+	if strings.HasPrefix(childName, parentName) {
+		aliasName = parentAlias.Name() + strings.TrimPrefix(childName, parentName)
 	}
 	return resource.NewURN(
 		sg.deployment.Target().Name.Q(),
@@ -635,14 +644,16 @@ func (sg *stepGenerator) generateSteps(event RegisterResourceEvent) ([]Step, err
 		return []Step{NewImportStep(sg.deployment, event, new, goal.IgnoreChanges, randomSeed)}, nil
 	}
 
-	isUserResource := !(providers.IsDefaultProvider(urn) || urn.Type() == resource.RootStackType)
+	isImplicitlyTargetedResource := providers.IsProviderType(urn.Type()) || urn.QualifiedType() == resource.RootStackType
 
-	// Internally managed resources are under Pulumi's control and changes or creations should be invisible
-	// to the user.
+	// Internally managed resources are under Pulumi's control and changes or creations should be invisible to
+	// the user, we also implicitly target providers (both default and explicit, see
+	// https://github.com/pulumi/pulumi/issues/13557 and https://github.com/pulumi/pulumi/issues/13591 for
+	// context on why).
 
 	// Resources are targeted by default
 	isTargeted := true
-	if sg.opts.Targets.IsConstrained() && isUserResource {
+	if sg.opts.Targets.IsConstrained() && !isImplicitlyTargetedResource {
 		isTargeted = sg.isTargetedForUpdate(new)
 	}
 
@@ -722,46 +733,81 @@ func (sg *stepGenerator) generateSteps(event RegisterResourceEvent) ([]Step, err
 		}
 	}
 
-	// Send the resource off to any Analyzers before being operated on.
+	// Send the resource off to any Analyzers before being operated on. We do two passes: first we perform
+	// remediatoins, and *then* we do analysis, since we want analyzers to run on the final resource states.
 	analyzers := sg.deployment.ctx.Host.ListAnalyzers()
-	for _, analyzer := range analyzers {
-		r := plugin.AnalyzerResource{
-			URN:        new.URN,
-			Type:       new.Type,
-			Name:       new.URN.Name(),
-			Properties: inputs,
-			Options: plugin.AnalyzerResourceOptions{
-				Protect:                 new.Protect,
-				IgnoreChanges:           goal.IgnoreChanges,
-				DeleteBeforeReplace:     goal.DeleteBeforeReplace,
-				AdditionalSecretOutputs: new.AdditionalSecretOutputs,
-				Aliases:                 new.GetAliases(),
-				CustomTimeouts:          new.CustomTimeouts,
-			},
-		}
-		providerResource := sg.getProviderResource(new.URN, new.Provider)
-		if providerResource != nil {
-			r.Provider = &plugin.AnalyzerProviderResource{
-				URN:        providerResource.URN,
-				Type:       providerResource.Type,
-				Name:       providerResource.URN.Name(),
-				Properties: providerResource.Inputs,
+	for _, remediate := range []bool{true, false} {
+		for _, analyzer := range analyzers {
+			r := plugin.AnalyzerResource{
+				URN:        new.URN,
+				Type:       new.Type,
+				Name:       new.URN.Name(),
+				Properties: inputs,
+				Options: plugin.AnalyzerResourceOptions{
+					Protect:                 new.Protect,
+					IgnoreChanges:           goal.IgnoreChanges,
+					DeleteBeforeReplace:     goal.DeleteBeforeReplace,
+					AdditionalSecretOutputs: new.AdditionalSecretOutputs,
+					Aliases:                 new.GetAliases(),
+					CustomTimeouts:          new.CustomTimeouts,
+				},
 			}
-		}
-
-		diagnostics, err := analyzer.Analyze(r)
-		if err != nil {
-			return nil, err
-		}
-		for _, d := range diagnostics {
-			if d.EnforcementLevel == apitype.Mandatory {
-				if !sg.deployment.preview {
-					invalid = true
+			providerResource := sg.getProviderResource(new.URN, new.Provider)
+			if providerResource != nil {
+				r.Provider = &plugin.AnalyzerProviderResource{
+					URN:        providerResource.URN,
+					Type:       providerResource.Type,
+					Name:       providerResource.URN.Name(),
+					Properties: providerResource.Inputs,
 				}
-				sg.sawError = true
 			}
-			// For now, we always use the URN we have here rather than a URN specified with the diagnostic.
-			sg.opts.Events.OnPolicyViolation(new.URN, d)
+
+			if remediate {
+				// During the first pass, perform remediations. This ensures subsequent analyzers run
+				// against the transformed properties, ensuring nothing circumvents the analysis checks.
+				tresults, err := analyzer.Remediate(r)
+				if err != nil {
+					return nil, fmt.Errorf("failed to run remediation: %w", err)
+				} else if len(tresults) > 0 {
+					for _, tresult := range tresults {
+						if tresult.Diagnostic != "" {
+							// If there is a diagnostic, we have a warning to display.
+							sg.opts.Events.OnPolicyViolation(new.URN, plugin.AnalyzeDiagnostic{
+								PolicyName:        tresult.PolicyName,
+								PolicyPackName:    tresult.PolicyPackName,
+								PolicyPackVersion: tresult.PolicyPackVersion,
+								Description:       tresult.Description,
+								Message:           tresult.Diagnostic,
+								EnforcementLevel:  apitype.Advisory,
+								URN:               new.URN,
+							})
+						} else if tresult.Properties != nil {
+							// Emit a nice message so users know what was remediated.
+							sg.opts.Events.OnPolicyRemediation(new.URN, tresult, inputs, tresult.Properties)
+							// Use the transformed inputs rather than the old ones from this point onwards.
+							inputs = tresult.Properties
+							new.Inputs = tresult.Properties
+						}
+					}
+				}
+			} else {
+				// During the second pass, perform analysis. This happens after remediations so that
+				// analyzers see properties as they were after the transformations have occurred.
+				diagnostics, err := analyzer.Analyze(r)
+				if err != nil {
+					return nil, fmt.Errorf("failed to run policy: %w", err)
+				}
+				for _, d := range diagnostics {
+					if d.EnforcementLevel == apitype.Mandatory {
+						if !sg.deployment.preview {
+							invalid = true
+						}
+						sg.sawError = true
+					}
+					// For now, we always use the URN we have here rather than a URN specified with the diagnostic.
+					sg.opts.Events.OnPolicyViolation(new.URN, d)
+				}
+			}
 		}
 	}
 
@@ -819,10 +865,13 @@ func (sg *stepGenerator) generateSteps(event RegisterResourceEvent) ([]Step, err
 		}, nil
 	}
 
-	if isTargeted {
+	// This looks odd that we have to recheck isTargetedForUpdate but it's to cover implicitly targeted
+	// resources like providers (where isTargeted is always true), but which might have been _explicitly_
+	// targeted due to being in the --targets list or being explicitly pulled in by --target-dependents.
+	if isTargeted && sg.isTargetedForUpdate(new) {
 		// Transitive dependencies are not initially targeted, ensure that they are in the Targets so that the
-		// deployment_executor identifies that the URN is targeted if applicable
-		sg.opts.Targets.addLiteral(urn)
+		// step_generator identifies that the URN is targeted if applicable
+		sg.targetsActual.addLiteral(urn)
 	}
 
 	// Case 3: hasOld
@@ -960,7 +1009,7 @@ func (sg *stepGenerator) generateStepsFromDiff(
 				if sg.deployment.preview {
 					sg.deployment.ctx.Diag.Warningf(diag.StreamMessage(urn, message, 0))
 				} else {
-					return nil, fmt.Errorf(message)
+					return nil, errors.New(message)
 				}
 			}
 
@@ -1371,10 +1420,10 @@ func (sg *stepGenerator) determineAllowedResourcesToDeleteFromTargets(
 // process deletes in reverse (so we don't delete resources upon which other resources depend), we reverse the list and
 // hand it back to the deployment executor for safe execution.
 func (sg *stepGenerator) ScheduleDeletes(deleteSteps []Step) []antichain {
-	var antichains []antichain                // the list of parallelizable steps we intend to return.
-	dg := sg.deployment.depGraph              // the current deployment's dependency graph.
-	condemned := make(graph.ResourceSet)      // the set of condemned resources.
-	stepMap := make(map[*resource.State]Step) // a map from resource states to the steps that delete them.
+	var antichains []antichain                    // the list of parallelizable steps we intend to return.
+	dg := sg.deployment.depGraph                  // the current deployment's dependency graph.
+	condemned := mapset.NewSet[*resource.State]() // the set of condemned resources.
+	stepMap := make(map[*resource.State]Step)     // a map from resource states to the steps that delete them.
 
 	// If we don't trust the dependency graph we've been given, we must be conservative and delete everything serially.
 	if !sg.opts.TrustDependencies {
@@ -1391,17 +1440,17 @@ func (sg *stepGenerator) ScheduleDeletes(deleteSteps []Step) []antichain {
 	// For every step we've been given, record it as condemned and save the step that will be used to delete it. We'll
 	// iteratively place these steps into antichains as we remove elements from the condemned set.
 	for _, step := range deleteSteps {
-		condemned[step.Res()] = true
+		condemned.Add(step.Res())
 		stepMap[step.Res()] = step
 	}
 
-	for len(condemned) > 0 {
+	for !condemned.IsEmpty() {
 		var steps antichain
 		logging.V(7).Infof("Planner beginning schedule of new deletion antichain")
-		for res := range condemned {
+		for res := range condemned.Iter() {
 			// Does res have any outgoing edges to resources that haven't already been removed from the graph?
 			condemnedDependencies := dg.DependenciesOf(res).Intersect(condemned)
-			if len(condemnedDependencies) == 0 {
+			if condemnedDependencies.IsEmpty() {
 				// If not, it's safe to delete res at this stage.
 				logging.V(7).Infof("Planner scheduling deletion of '%v'", res.URN)
 				steps = append(steps, stepMap[res])
@@ -1413,7 +1462,7 @@ func (sg *stepGenerator) ScheduleDeletes(deleteSteps []Step) []antichain {
 
 		// For all reosurces that are to be deleted in this round, remove them from the graph.
 		for _, step := range steps {
-			delete(condemned, step.Res())
+			condemned.Remove(step.Res())
 		}
 
 		antichains = append(antichains, steps)
@@ -1582,7 +1631,7 @@ func diffResource(urn resource.URN, id resource.ID, oldInputs, oldOutputs,
 		if tmp.AnyChanges() {
 			diff.Changes = plugin.DiffSome
 			diff.ChangedKeys = tmp.ChangedKeys()
-			diff.DetailedDiff = plugin.NewDetailedDiffFromObjectDiff(tmp)
+			diff.DetailedDiff = plugin.NewDetailedDiffFromObjectDiff(tmp, true /* inputDiff */)
 		} else {
 			diff.Changes = plugin.DiffNone
 		}
@@ -1915,7 +1964,7 @@ func (sg *stepGenerator) calculateDependentReplacements(root *resource.State) ([
 	return toReplace, nil
 }
 
-func (sg *stepGenerator) AnalyzeResources() result.Result {
+func (sg *stepGenerator) AnalyzeResources() error {
 	var resources []plugin.AnalyzerStackResource
 	sg.deployment.news.mapRange(func(urn resource.URN, v *resource.State) bool {
 		goal, ok := sg.deployment.goals.get(urn)
@@ -1956,9 +2005,9 @@ func (sg *stepGenerator) AnalyzeResources() result.Result {
 
 	analyzers := sg.deployment.ctx.Host.ListAnalyzers()
 	for _, analyzer := range analyzers {
-		diagnostics, aErr := analyzer.AnalyzeStack(resources)
-		if aErr != nil {
-			return result.FromError(aErr)
+		diagnostics, err := analyzer.AnalyzeStack(resources)
+		if err != nil {
+			return err
 		}
 		for _, d := range diagnostics {
 			sg.sawError = sg.sawError || (d.EnforcementLevel == apitype.Mandatory)
@@ -2001,5 +2050,6 @@ func newStepGenerator(
 		dependentReplaceKeys: make(map[resource.URN][]resource.PropertyKey),
 		aliased:              make(map[resource.URN]resource.URN),
 		aliases:              make(map[resource.URN]resource.URN),
+		targetsActual:        opts.Targets.Clone(),
 	}
 }

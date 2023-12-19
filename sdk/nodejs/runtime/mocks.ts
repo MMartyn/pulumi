@@ -15,9 +15,9 @@
 import { deserializeProperties, serializeProperties } from "./rpc";
 import { getProject, getStack, setMockOptions } from "./settings";
 
-const provproto = require("../proto/provider_pb.js");
-const resproto = require("../proto/resource_pb.js");
-const structproto = require("google-protobuf/google/protobuf/struct_pb.js");
+import * as structproto from "google-protobuf/google/protobuf/struct_pb";
+import * as provproto from "../proto/provider_pb";
+import * as resproto from "../proto/resource_pb";
 
 /**
  * MockResourceArgs is used to construct a newResource Mock.
@@ -110,7 +110,7 @@ export interface Mocks {
 }
 
 export class MockMonitor {
-    readonly resources = new Map<string, { urn: string; id: string | undefined; state: any }>();
+    readonly resources = new Map<string, { urn: string; id: string | null; state: any }>();
 
     constructor(readonly mocks: Mocks) {}
 
@@ -171,7 +171,7 @@ export class MockMonitor {
             const urn = this.newUrn(req.getParent(), req.getType(), req.getName());
             const serializedState = await serializeProperties("", result.state);
 
-            this.resources.set(urn, { urn, id: result.id, state: serializedState });
+            this.resources.set(urn, { urn, id: result.id ?? null, state: serializedState });
 
             const response = new resproto.ReadResourceResponse();
             response.setUrn(urn);
@@ -196,11 +196,11 @@ export class MockMonitor {
             const urn = this.newUrn(req.getParent(), req.getType(), req.getName());
             const serializedState = await serializeProperties("", result.state);
 
-            this.resources.set(urn, { urn, id: result.id, state: serializedState });
+            this.resources.set(urn, { urn, id: result.id ?? null, state: serializedState });
 
             const response = new resproto.RegisterResourceResponse();
             response.setUrn(urn);
-            response.setId(result.id);
+            response.setId(result.id || "");
             response.setObject(structproto.Struct.fromJavaScript(serializedState));
             callback(null, response);
         } catch (err) {
@@ -227,7 +227,7 @@ export class MockMonitor {
 
         // Support for "outputValues" is deliberately disabled for the mock monitor so
         // instances of `Output` don't show up in `MockResourceArgs` inputs.
-        const hasSupport = id === "secrets" || id === "resourceReferences";
+        const hasSupport = id !== "outputValues";
 
         callback(null, {
             getHassupport: () => hasSupport,

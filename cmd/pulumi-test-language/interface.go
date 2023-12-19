@@ -25,7 +25,12 @@ import (
 	"path/filepath"
 	"strings"
 
+	mapset "github.com/deckarep/golang-set/v2"
+
 	"github.com/blang/semver"
+	"github.com/hexops/gotextdiff"
+	"github.com/hexops/gotextdiff/myers"
+	"github.com/hexops/gotextdiff/span"
 	"github.com/pulumi/pulumi/pkg/v3/backend"
 	backendDisplay "github.com/pulumi/pulumi/pkg/v3/backend/display"
 	"github.com/pulumi/pulumi/pkg/v3/backend/filestate"
@@ -260,8 +265,14 @@ func compareDirectories(actualDir, expectedDir string, allowNewFiles bool) ([]st
 		}
 
 		if !bytes.Equal(actualContents, expectedContents) {
-			// TODO(https://github.com/pulumi/pulumi/issues/13943): Find a way to show better diffs here
-			validations = append(validations, fmt.Sprintf("expected file %s does not match actual file", relativePath))
+			edits := myers.ComputeEdits(
+				span.URIFromPath("expected"), string(expectedContents), string(actualContents),
+			)
+			diff := gotextdiff.ToUnified("expected", "actual", string(expectedContents), edits)
+
+			validations = append(validations, fmt.Sprintf(
+				"expected file %s does not match actual file:\n\n%s", relativePath, diff),
+			)
 		}
 
 		return nil
@@ -398,47 +409,35 @@ func (h *testHost) CloseProvider(provider plugin.Provider) error {
 func (h *testHost) LanguageRuntime(
 	root, pwd, runtime string, options map[string]interface{},
 ) (plugin.LanguageRuntime, error) {
+	if runtime != h.runtimeName {
+		return nil, fmt.Errorf("unexpected runtime %s", runtime)
+	}
 	return h.runtime, nil
-}
-
-// difference returns the elements in `a` that aren't in `b`.
-func difference(a, b []string) []string {
-	mb := make(map[string]struct{}, len(b))
-	for _, x := range b {
-		mb[x] = struct{}{}
-	}
-	var diff []string
-	for _, x := range a {
-		if _, found := mb[x]; !found {
-			diff = append(diff, x)
-		}
-	}
-	return diff
 }
 
 func (h *testHost) EnsurePlugins(plugins []workspace.PluginSpec, kinds plugin.Flags) error {
 	// EnsurePlugins will be called with the result of GetRequiredPlugins, so we can use this to check
 	// that that returned the expected plugins (with expected versions).
-	expected := []string{
+	expected := mapset.NewSet(
 		fmt.Sprintf("language-%s@<nil>", h.runtimeName),
-	}
+	)
 	for _, provider := range h.providers {
 		pkg := provider.Pkg()
 		version, err := getProviderVersion(provider)
 		if err != nil {
 			return fmt.Errorf("get provider version %s: %w", pkg, err)
 		}
-		expected = append(expected, fmt.Sprintf("resource-%s@%s", pkg, version))
+		expected.Add(fmt.Sprintf("resource-%s@%s", pkg, version))
 	}
 
-	actual := make([]string, len(plugins))
-	for i, plugin := range plugins {
-		actual[i] = fmt.Sprintf("%s-%s@%s", plugin.Kind, plugin.Name, plugin.Version)
+	actual := mapset.NewSetWithSize[string](len(plugins))
+	for _, plugin := range plugins {
+		actual.Add(fmt.Sprintf("%s-%s@%s", plugin.Kind, plugin.Name, plugin.Version))
 	}
 
 	// Symmetric difference, we want to know if there are any unexpected plugins, or any missing plugins.
-	diff := append(difference(expected, actual), difference(actual, expected)...)
-	if len(diff) > 0 {
+	diff := expected.SymmetricDifference(actual)
+	if !diff.IsEmpty() {
 		return fmt.Errorf("unexpected required plugins: actual %v, expected %v", actual, expected)
 	}
 
@@ -676,7 +675,7 @@ func (eng *languageTestServer) RunLanguageTest(
 		if err != nil {
 			return nil, fmt.Errorf("unmarshal schema for provider %s: %w", pkg, err)
 		}
-		boundSpec, diags, err := schema.BindSpec(spec, nil)
+		boundSpec, diags, err := schema.BindSpec(spec, loader)
 		if err != nil {
 			return nil, fmt.Errorf("bind schema for provider %s: %w", pkg, err)
 		}
@@ -689,9 +688,13 @@ func (eng *languageTestServer) RunLanguageTest(
 			return nil, fmt.Errorf("marshal schema for provider %s: %w", pkg, err)
 		}
 
-		err = languageClient.GeneratePackage(sdkTempDir, string(schemaBytes), nil, grpcServer.Addr())
+		diags, err = languageClient.GeneratePackage(sdkTempDir, string(schemaBytes), nil, grpcServer.Addr())
 		if err != nil {
 			return makeTestResponse(fmt.Sprintf("generate package %s: %v", pkg, err)), nil
+		}
+		// TODO: Might be good to test warning diagnostics here
+		if diags.HasErrors() {
+			return makeTestResponse(fmt.Sprintf("generate package %s: %v", pkg, diags)), nil
 		}
 
 		snapshotDir := filepath.Join(token.SnapshotDirectory, "sdks", sdkName)
@@ -769,7 +772,7 @@ func (eng *languageTestServer) RunLanguageTest(
 
 	// TODO(https://github.com/pulumi/pulumi/issues/13941): We don't capture stdout/stderr from the language
 	// plugin, so we can't show it back to the test.
-	err = languageClient.InstallDependencies(projectDir)
+	err = languageClient.InstallDependencies(projectDir, ".")
 	if err != nil {
 		return makeTestResponse(fmt.Sprintf("install dependencies: %v", err)), nil
 	}

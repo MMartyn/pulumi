@@ -49,7 +49,6 @@ import (
 	"github.com/pulumi/pulumi/pkg/v3/resource/edit"
 	"github.com/pulumi/pulumi/pkg/v3/resource/stack"
 	"github.com/pulumi/pulumi/pkg/v3/secrets"
-	"github.com/pulumi/pulumi/pkg/v3/util/validation"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/apitype"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/diag"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/diag/colors"
@@ -62,41 +61,6 @@ import (
 	"github.com/pulumi/pulumi/sdk/v3/go/common/util/contract"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/util/result"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/workspace"
-)
-
-// TODO[pulumi/pulumi#12539]:
-// This section contains names of environment variables
-// that affect the behavior of the backend.
-//
-// These must all be registered in common/env so that they're available
-// with the 'pulumi env' command.
-// However, we don't currently use env.Value() to access their values
-// because it prevents us from overriding the definition of os.Getenv
-// in tests.
-var (
-	// PulumiFilestateNoLegacyWarningEnvVar is an env var that must be truthy
-	// to disable the warning printed by the filestate backend
-	// when it detects that the state has both, project-scoped and legacy stacks.
-	PulumiFilestateNoLegacyWarningEnvVar = env.SelfManagedStateNoLegacyWarning.Var().Name()
-
-	// PulumiFilestateLegacyLayoutEnvVar is the name of an environment variable
-	// that can be set to force the use of the legacy layout
-	// when initializing an empty bucket for filestate.
-	//
-	// This opt-out is intended to be removed in a future release.
-	PulumiFilestateLegacyLayoutEnvVar = env.SelfManagedStateLegacyLayout.Var().Name()
-
-	// PulumiFilestateGzipEnvVar is an env var that must be truthy
-	// to enable gzip compression when using the filestate backend.
-	PulumiFilestateGzipEnvVar = env.SelfManagedGzip.Var().Name()
-
-	// PulumiFilestateRetainCheckpoints is an env var that must be truthy
-	// to write out timestamped state files.
-	PulumiFilestateRetainCheckpoints = env.SelfManagedRetainCheckpoints.Var().Name()
-
-	// PulumiFilestateRetainCheckpoints is an env var that must be truthy
-	// to disable checkpoint backups.
-	PulumiFilestateDisableCheckpointBackups = env.SelfManagedDisableCheckpointBackups.Var().Name()
 )
 
 // UpgradeOptions customizes the behavior of the upgrade operation.
@@ -115,7 +79,7 @@ type UpgradeOptions struct {
 	//
 	// If this function is not specified,
 	// stacks without projects will be skipped during the upgrade.
-	ProjectsForDetachedStacks func(stacks []tokens.Name) (projects []tokens.Name, err error)
+	ProjectsForDetachedStacks func(stacks []tokens.StackName) (projects []tokens.Name, err error)
 }
 
 // Backend extends the base backend interface with specific information about local backends.
@@ -143,7 +107,7 @@ type localBackend struct {
 
 	gzip bool
 
-	Getenv func(string) string // == os.Getenv
+	Env env.Env
 
 	// The current project, if any.
 	currentProject atomic.Pointer[workspace.Project]
@@ -156,7 +120,7 @@ type localBackend struct {
 }
 
 type localBackendReference struct {
-	name    tokens.Name
+	name    tokens.StackName
 	project tokens.Name
 
 	// A thread-safe way to get the current project.
@@ -174,7 +138,7 @@ type localBackendReference struct {
 func (r *localBackendReference) String() string {
 	// If project is blank this is a legacy non-project scoped stack reference, just return the name.
 	if r.project == "" {
-		return string(r.name)
+		return r.name.String()
 	}
 
 	if r.currentProject != nil {
@@ -183,7 +147,7 @@ func (r *localBackendReference) String() string {
 		// we take the current project (if present) into account.
 		// If the project names match, we can elide them.
 		if proj != nil && string(r.project) == string(proj.Name) {
-			return string(r.name)
+			return r.name.String()
 		}
 	}
 
@@ -191,7 +155,7 @@ func (r *localBackendReference) String() string {
 	return fmt.Sprintf("organization/%s/%s", r.project, r.name)
 }
 
-func (r *localBackendReference) Name() tokens.Name {
+func (r *localBackendReference) Name() tokens.StackName {
 	return r.name
 }
 
@@ -232,10 +196,10 @@ func New(ctx context.Context, d diag.Sink, originalURL string, project *workspac
 }
 
 type localBackendOptions struct {
-	// Getenv specifies how to get environment variables.
+	// Env specifies how to get environment variables.
 	//
-	// Defaults to os.Getenv.
-	Getenv func(string) string
+	// Defaults to env.Global
+	Env env.Env
 }
 
 // newLocalBackend builds a filestate backend implementation
@@ -247,8 +211,8 @@ func newLocalBackend(
 	if opts == nil {
 		opts = &localBackendOptions{}
 	}
-	if opts.Getenv == nil {
-		opts.Getenv = os.Getenv
+	if opts.Env == nil {
+		opts.Env = env.Global()
 	}
 
 	if !IsFileStateBackendURL(originalURL) {
@@ -299,7 +263,7 @@ func newLocalBackend(
 		return nil, err
 	}
 
-	gzipCompression := cmdutil.IsTruthy(opts.Getenv(PulumiFilestateGzipEnvVar))
+	gzipCompression := opts.Env.GetBool(env.SelfManagedGzip)
 
 	wbucket := &wrappedBucket{bucket: bucket}
 	bucket = nil // prevent accidental use of unwrapped bucket
@@ -311,14 +275,14 @@ func newLocalBackend(
 		bucket:      wbucket,
 		lockID:      lockID.String(),
 		gzip:        gzipCompression,
-		Getenv:      opts.Getenv,
+		Env:         opts.Env,
 	}
 	backend.currentProject.Store(project)
 
 	// Read the Pulumi state metadata
 	// and ensure that it is compatible with this version of the CLI.
 	// The version in the metadata file informs which store we use.
-	meta, err := ensurePulumiMeta(ctx, wbucket, opts.Getenv)
+	meta, err := ensurePulumiMeta(ctx, wbucket, opts.Env)
 	if err != nil {
 		return nil, err
 	}
@@ -349,7 +313,7 @@ func newLocalBackend(
 	}
 
 	// If we're not in project mode, or we've disabled the warning, we're done.
-	if !projectMode || cmdutil.IsTruthy(opts.Getenv(PulumiFilestateNoLegacyWarningEnvVar)) {
+	if !projectMode || opts.Env.GetBool(env.SelfManagedStateNoLegacyWarning) {
 		return backend, nil
 	}
 	// Otherwise, warn about any old stack files.
@@ -390,7 +354,7 @@ func (b *localBackend) Upgrade(ctx context.Context, opts *UpgradeOptions) error 
 		return fmt.Errorf("read old references: %w", err)
 	}
 	sort.Slice(olds, func(i, j int) bool {
-		return olds[i].Name() < olds[j].Name()
+		return olds[i].Name().String() < olds[j].Name().String()
 	})
 
 	// There's no limit to the number of stacks we need to upgrade.
@@ -427,7 +391,7 @@ func (b *localBackend) Upgrade(ctx context.Context, opts *UpgradeOptions) error 
 	if opts.ProjectsForDetachedStacks != nil {
 		var (
 			// Names of stacks in 'olds' that don't have a project
-			detached []tokens.Name
+			detached []tokens.StackName
 
 			// reverseIdx[i] is the index of detached[i]
 			// in olds and projects.
@@ -598,7 +562,7 @@ func Login(ctx context.Context, d diag.Sink, url string, project *workspace.Proj
 func (b *localBackend) getReference(ref backend.StackReference) (*localBackendReference, error) {
 	stackRef, ok := ref.(*localBackendReference)
 	if !ok {
-		return nil, fmt.Errorf("bad stack reference type")
+		return nil, errors.New("bad stack reference type")
 	}
 	return stackRef, stackRef.Validate()
 }
@@ -625,19 +589,19 @@ func (b *localBackend) SetCurrentProject(project *workspace.Project) {
 func (b *localBackend) GetPolicyPack(ctx context.Context, policyPack string,
 	d diag.Sink,
 ) (backend.PolicyPack, error) {
-	return nil, fmt.Errorf("File state backend does not support resource policy")
+	return nil, errors.New("File state backend does not support resource policy")
 }
 
 func (b *localBackend) ListPolicyGroups(ctx context.Context, orgName string, _ backend.ContinuationToken) (
 	apitype.ListPolicyGroupsResponse, backend.ContinuationToken, error,
 ) {
-	return apitype.ListPolicyGroupsResponse{}, nil, fmt.Errorf("File state backend does not support resource policy")
+	return apitype.ListPolicyGroupsResponse{}, nil, errors.New("File state backend does not support resource policy")
 }
 
 func (b *localBackend) ListPolicyPacks(ctx context.Context, orgName string, _ backend.ContinuationToken) (
 	apitype.ListPolicyPacksResponse, backend.ContinuationToken, error,
 ) {
-	return apitype.ListPolicyPacksResponse{}, nil, fmt.Errorf("File state backend does not support resource policy")
+	return apitype.ListPolicyPacksResponse{}, nil, errors.New("File state backend does not support resource policy")
 }
 
 func (b *localBackend) SupportsTags() bool {
@@ -645,6 +609,10 @@ func (b *localBackend) SupportsTags() bool {
 }
 
 func (b *localBackend) SupportsOrganizations() bool {
+	return false
+}
+
+func (b *localBackend) SupportsProgress() bool {
 	return false
 }
 
@@ -729,10 +697,6 @@ func (b *localBackend) CreateStack(ctx context.Context, stackRef backend.StackRe
 
 	if _, err := b.stackExists(ctx, localStackRef); err == nil {
 		return nil, &backend.StackAlreadyExistsError{StackName: string(stackName)}
-	}
-
-	if err = validation.ValidateStackProperties(stackName.Name().String(), nil); err != nil {
-		return nil, fmt.Errorf("validating stack properties: %w", err)
 	}
 
 	_, err = b.saveStack(ctx, localStackRef, nil, nil)
@@ -919,14 +883,14 @@ func (b *localBackend) PackPolicies(
 }
 
 func (b *localBackend) Preview(ctx context.Context, stack backend.Stack,
-	op backend.UpdateOperation,
+	op backend.UpdateOperation, events chan<- engine.Event,
 ) (*deploy.Plan, sdkDisplay.ResourceChanges, result.Result) {
 	// We can skip PreviewThenPromptThenExecute and just go straight to Execute.
 	opts := backend.ApplierOptions{
 		DryRun:   true,
 		ShowLink: true,
 	}
-	return b.apply(ctx, apitype.PreviewUpdate, stack, op, opts, nil /*events*/)
+	return b.apply(ctx, apitype.PreviewUpdate, stack, op, opts, events)
 }
 
 func (b *localBackend) Update(ctx context.Context, stack backend.Stack,
@@ -1004,7 +968,6 @@ func (b *localBackend) apply(
 		return nil, nil, result.Errorf("provided project name %q doesn't match Pulumi.yaml", localStackRef.project)
 	}
 
-	stackName := stackRef.FullyQualifiedName()
 	actionLabel := backend.ActionLabel(kind, opts.DryRun)
 
 	if !(op.Opts.Display.JSONDisplay || op.Opts.Display.Type == display.DisplayWatch) {
@@ -1023,7 +986,7 @@ func (b *localBackend) apply(
 	displayEvents := make(chan engine.Event)
 	displayDone := make(chan bool)
 	go display.ShowEvents(
-		strings.ToLower(actionLabel), kind, stackName.Name(), op.Proj.Name, "",
+		strings.ToLower(actionLabel), kind, stackRef.Name(), op.Proj.Name, "",
 		displayEvents, displayDone, op.Opts.Display, opts.DryRun)
 
 	// Create a separate event channel for engine events that we'll pipe to both listening streams.
@@ -1059,21 +1022,22 @@ func (b *localBackend) apply(
 	start := time.Now().Unix()
 	var plan *deploy.Plan
 	var changes sdkDisplay.ResourceChanges
-	var updateRes result.Result
+	var updateErr error
 	switch kind {
 	case apitype.PreviewUpdate:
-		plan, changes, updateRes = engine.Update(update, engineCtx, op.Opts.Engine, true)
+		plan, changes, updateErr = engine.Update(update, engineCtx, op.Opts.Engine, true)
 	case apitype.UpdateUpdate:
-		_, changes, updateRes = engine.Update(update, engineCtx, op.Opts.Engine, opts.DryRun)
+		_, changes, updateErr = engine.Update(update, engineCtx, op.Opts.Engine, opts.DryRun)
 	case apitype.ResourceImportUpdate:
-		_, changes, updateRes = engine.Import(update, engineCtx, op.Opts.Engine, op.Imports, opts.DryRun)
+		_, changes, updateErr = engine.Import(update, engineCtx, op.Opts.Engine, op.Imports, opts.DryRun)
 	case apitype.RefreshUpdate:
-		_, changes, updateRes = engine.Refresh(update, engineCtx, op.Opts.Engine, opts.DryRun)
+		_, changes, updateErr = engine.Refresh(update, engineCtx, op.Opts.Engine, opts.DryRun)
 	case apitype.DestroyUpdate:
-		_, changes, updateRes = engine.Destroy(update, engineCtx, op.Opts.Engine, opts.DryRun)
+		_, changes, updateErr = engine.Destroy(update, engineCtx, op.Opts.Engine, opts.DryRun)
 	default:
 		contract.Failf("Unrecognized update kind: %s", kind)
 	}
+	updateRes := result.WrapIfNonNil(updateErr)
 	end := time.Now().Unix()
 
 	// Wait for the display to finish showing all the events.

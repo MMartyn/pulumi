@@ -1,9 +1,9 @@
 package test
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -14,7 +14,7 @@ func TestBatches(t *testing.T) {
 	t.Parallel()
 	for _, n := range []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10} {
 		n := n
-		t.Run(fmt.Sprintf("%d", n), func(t *testing.T) {
+		t.Run(strconv.Itoa(n), func(t *testing.T) {
 			t.Parallel()
 
 			var combined []ProgramTest
@@ -33,7 +33,7 @@ func TestTranspiledExampleTestsCovered(t *testing.T) {
 	// Check that all synced tests from pulumi/yaml are in test list
 	syncDir := filepath.Join("testdata", transpiledExamplesDir)
 	untestedTranspiledExamples, err := getUntestedTranspiledExampleDirs(syncDir, PulumiPulumiYAMLProgramTests)
-	assert.Nil(t, err)
+	assert.NoError(t, err)
 	assert.Emptyf(t, untestedTranspiledExamples,
 		"Untested examples in %s: %v", syncDir, untestedTranspiledExamples)
 }

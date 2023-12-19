@@ -1,4 +1,4 @@
-// Copyright 2016-2022, Pulumi Corporation.
+// Copyright 2016-2023, Pulumi Corporation.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -38,7 +38,6 @@ import (
 	"github.com/pulumi/pulumi/sdk/v3/go/common/diag/colors"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource/config"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource/plugin"
-	"github.com/pulumi/pulumi/sdk/v3/go/common/tokens"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/util/contract"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/workspace"
 )
@@ -395,18 +394,18 @@ func (pc *Client) CreateStack(
 	ctx context.Context, stackID StackIdentifier, tags map[apitype.StackTagName]string, teams []string,
 ) (apitype.Stack, error) {
 	// Validate names and tags.
-	if err := validation.ValidateStackProperties(stackID.Stack, tags); err != nil {
+	if err := validation.ValidateStackTags(tags); err != nil {
 		return apitype.Stack{}, fmt.Errorf("validating stack properties: %w", err)
 	}
 
 	stack := apitype.Stack{
-		StackName:   tokens.QName(stackID.Stack),
+		StackName:   stackID.Stack.Q(),
 		ProjectName: stackID.Project,
 		OrgName:     stackID.Owner,
 		Tags:        tags,
 	}
 	createStackReq := apitype.CreateStackRequest{
-		StackName: stackID.Stack,
+		StackName: stackID.Stack.String(),
 		Tags:      tags,
 		Teams:     teams,
 	}
@@ -643,7 +642,7 @@ func (pc *Client) CreateUpdate(
 // RenameStack renames the provided stack to have the new identifier.
 func (pc *Client) RenameStack(ctx context.Context, currentID, newID StackIdentifier) error {
 	req := apitype.StackRenameRequest{
-		NewName:    newID.Stack,
+		NewName:    newID.Stack.String(),
 		NewProject: newID.Project,
 	}
 	return pc.restCall(ctx, "POST", getStackPath(currentID, "rename"), nil, &req, nil)
@@ -655,7 +654,7 @@ func (pc *Client) StartUpdate(ctx context.Context, update UpdateIdentifier,
 	tags map[apitype.StackTagName]string,
 ) (int, string, error) {
 	// Validate names and tags.
-	if err := validation.ValidateStackProperties(update.StackIdentifier.Stack, tags); err != nil {
+	if err := validation.ValidateStackTags(tags); err != nil {
 		return 0, "", fmt.Errorf("validating stack properties: %w", err)
 	}
 
@@ -739,7 +738,7 @@ func (pc *Client) PublishPolicyPack(ctx context.Context, orgName string,
 	// is in use, which does not provide  a version tag.
 	var versionMsg string
 	if analyzerInfo.Version != "" {
-		versionMsg = fmt.Sprintf(" - version %s", analyzerInfo.Version)
+		versionMsg = " - version " + analyzerInfo.Version
 	}
 	fmt.Printf("Publishing %q%s to %q\n", analyzerInfo.Name, versionMsg, orgName)
 
@@ -931,7 +930,7 @@ func (pc *Client) GetUpdateEvents(ctx context.Context, update UpdateIdentifier,
 ) (apitype.UpdateResults, error) {
 	path := getUpdatePath(update)
 	if continuationToken != nil {
-		path += fmt.Sprintf("?continuationToken=%s", *continuationToken)
+		path += "?continuationToken=" + *continuationToken
 	}
 
 	var results apitype.UpdateResults
@@ -1060,7 +1059,7 @@ func (pc *Client) GetUpdateEngineEvents(ctx context.Context, update UpdateIdenti
 ) (apitype.GetUpdateEventsResponse, error) {
 	path := getUpdatePath(update, "events")
 	if continuationToken != nil {
-		path += fmt.Sprintf("?continuationToken=%s", *continuationToken)
+		path += "?continuationToken=" + *continuationToken
 	}
 
 	var resp apitype.GetUpdateEventsResponse
@@ -1116,7 +1115,7 @@ func (pc *Client) CreateDeployment(ctx context.Context, stack StackIdentifier,
 func (pc *Client) GetDeploymentLogs(ctx context.Context, stack StackIdentifier, id,
 	token string,
 ) (*apitype.DeploymentLogs, error) {
-	path := getDeploymentPath(stack, id, fmt.Sprintf("logs?continuationToken=%s", token))
+	path := getDeploymentPath(stack, id, "logs?continuationToken="+token)
 	var resp apitype.DeploymentLogs
 	err := pc.restCall(ctx, http.MethodGet, path, nil, nil, &resp)
 	if err != nil {

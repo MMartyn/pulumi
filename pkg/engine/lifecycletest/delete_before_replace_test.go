@@ -6,14 +6,13 @@ import (
 	"github.com/blang/semver"
 	"github.com/stretchr/testify/assert"
 
-	. "github.com/pulumi/pulumi/pkg/v3/engine"
+	. "github.com/pulumi/pulumi/pkg/v3/engine" //nolint:revive
 	"github.com/pulumi/pulumi/pkg/v3/resource/deploy"
 	"github.com/pulumi/pulumi/pkg/v3/resource/deploy/deploytest"
 	"github.com/pulumi/pulumi/pkg/v3/resource/deploy/providers"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource/plugin"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/tokens"
-	"github.com/pulumi/pulumi/sdk/v3/go/common/util/result"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/workspace"
 )
 
@@ -88,7 +87,7 @@ func generateComplexTestDependencyGraph(
 
 	programF := deploytest.NewLanguageRuntimeF(func(_ plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
 		register := func(urn resource.URN, provider string, inputs resource.PropertyMap) resource.ID {
-			_, id, _, err := monitor.RegisterResource(urn.Type(), string(urn.Name()), true, deploytest.ResourceOptions{
+			_, id, _, err := monitor.RegisterResource(urn.Type(), urn.Name(), true, deploytest.ResourceOptions{
 				Provider: provider,
 				Inputs:   inputs,
 			})
@@ -174,9 +173,9 @@ func TestDeleteBeforeReplace(t *testing.T) {
 		ExpectFailure: false,
 		SkipPreview:   true,
 		Validate: func(project workspace.Project, target deploy.Target, entries JournalEntries,
-			evts []Event, res result.Result,
-		) result.Result {
-			assert.Nil(t, res)
+			evts []Event, err error,
+		) error {
+			assert.NoError(t, err)
 
 			replaced := make(map[resource.URN]bool)
 			for _, entry := range entries {
@@ -194,7 +193,7 @@ func TestDeleteBeforeReplace(t *testing.T) {
 				pickURN(t, urns, names, "K"): true,
 			}, replaced)
 
-			return res
+			return err
 		},
 	}}
 
@@ -347,9 +346,9 @@ func TestExplicitDeleteBeforeReplace(t *testing.T) {
 		Op: Update,
 
 		Validate: func(project workspace.Project, target deploy.Target, entries JournalEntries,
-			evts []Event, res result.Result,
-		) result.Result {
-			assert.Nil(t, res)
+			evts []Event, err error,
+		) error {
+			assert.NoError(t, err)
 
 			AssertSameSteps(t, []StepSummary{
 				{Op: deploy.OpSame, URN: provURN},
@@ -359,7 +358,7 @@ func TestExplicitDeleteBeforeReplace(t *testing.T) {
 				{Op: deploy.OpDeleteReplaced, URN: urnA},
 			}, SuccessfulSteps(entries))
 
-			return res
+			return err
 		},
 	}}
 	snap = p.Run(t, snap)
@@ -371,9 +370,9 @@ func TestExplicitDeleteBeforeReplace(t *testing.T) {
 		Op: Update,
 
 		Validate: func(project workspace.Project, target deploy.Target, entries JournalEntries,
-			evts []Event, res result.Result,
-		) result.Result {
-			assert.Nil(t, res)
+			evts []Event, err error,
+		) error {
+			assert.NoError(t, err)
 
 			AssertSameSteps(t, []StepSummary{
 				{Op: deploy.OpSame, URN: provURN},
@@ -385,7 +384,7 @@ func TestExplicitDeleteBeforeReplace(t *testing.T) {
 				{Op: deploy.OpCreateReplacement, URN: urnB},
 			}, SuccessfulSteps(entries))
 
-			return res
+			return err
 		},
 	}}
 	snap = p.Run(t, snap)
@@ -396,9 +395,9 @@ func TestExplicitDeleteBeforeReplace(t *testing.T) {
 		Op: Update,
 
 		Validate: func(project workspace.Project, target deploy.Target, entries JournalEntries,
-			evts []Event, res result.Result,
-		) result.Result {
-			assert.Nil(t, res)
+			evts []Event, err error,
+		) error {
+			assert.NoError(t, err)
 
 			AssertSameSteps(t, []StepSummary{
 				{Op: deploy.OpSame, URN: provURN},
@@ -408,7 +407,7 @@ func TestExplicitDeleteBeforeReplace(t *testing.T) {
 				{Op: deploy.OpDeleteReplaced, URN: urnB},
 			}, SuccessfulSteps(entries))
 
-			return res
+			return err
 		},
 	}}
 	snap = p.Run(t, snap)
@@ -420,9 +419,9 @@ func TestExplicitDeleteBeforeReplace(t *testing.T) {
 		Op: Update,
 
 		Validate: func(project workspace.Project, target deploy.Target, entries JournalEntries,
-			evts []Event, res result.Result,
-		) result.Result {
-			assert.Nil(t, res)
+			evts []Event, err error,
+		) error {
+			assert.NoError(t, err)
 
 			AssertSameSteps(t, []StepSummary{
 				{Op: deploy.OpSame, URN: provURN},
@@ -432,7 +431,7 @@ func TestExplicitDeleteBeforeReplace(t *testing.T) {
 				{Op: deploy.OpDeleteReplaced, URN: urnA},
 			}, SuccessfulSteps(entries))
 
-			return res
+			return err
 		},
 	}}
 	snap = p.Run(t, snap)
@@ -444,9 +443,9 @@ func TestExplicitDeleteBeforeReplace(t *testing.T) {
 		Op: Update,
 
 		Validate: func(project workspace.Project, target deploy.Target, entries JournalEntries,
-			evts []Event, res result.Result,
-		) result.Result {
-			assert.Nil(t, res)
+			evts []Event, err error,
+		) error {
+			assert.NoError(t, err)
 
 			AssertSameSteps(t, []StepSummary{
 				{Op: deploy.OpSame, URN: provURN},
@@ -458,7 +457,7 @@ func TestExplicitDeleteBeforeReplace(t *testing.T) {
 				{Op: deploy.OpCreateReplacement, URN: urnB},
 			}, SuccessfulSteps(entries))
 
-			return res
+			return err
 		},
 	}}
 	snap = p.Run(t, snap)
@@ -470,9 +469,9 @@ func TestExplicitDeleteBeforeReplace(t *testing.T) {
 		Op: Update,
 
 		Validate: func(project workspace.Project, target deploy.Target, entries JournalEntries,
-			evts []Event, res result.Result,
-		) result.Result {
-			assert.Nil(t, res)
+			evts []Event, err error,
+		) error {
+			assert.NoError(t, err)
 
 			AssertSameSteps(t, []StepSummary{
 				{Op: deploy.OpSame, URN: provURN},
@@ -482,7 +481,7 @@ func TestExplicitDeleteBeforeReplace(t *testing.T) {
 				{Op: deploy.OpDeleteReplaced, URN: urnA},
 			}, SuccessfulSteps(entries))
 
-			return res
+			return err
 		},
 	}}
 	p.Run(t, snap)
@@ -569,9 +568,9 @@ func TestDependencyChangeDBR(t *testing.T) {
 		{
 			Op: Update,
 			Validate: func(project workspace.Project, target deploy.Target, entries JournalEntries,
-				evts []Event, res result.Result,
-			) result.Result {
-				assert.Nil(t, res)
+				evts []Event, err error,
+			) error {
+				assert.NoError(t, err)
 				assert.True(t, len(entries) > 0)
 
 				resBDeleted, resBSame := false, false
@@ -588,7 +587,7 @@ func TestDependencyChangeDBR(t *testing.T) {
 				assert.True(t, resBSame)
 				assert.False(t, resBDeleted)
 
-				return res
+				return err
 			},
 		},
 	}

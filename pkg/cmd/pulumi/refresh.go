@@ -81,7 +81,7 @@ func newRefreshCmd() *cobra.Command {
 			"This command compares the current stack's resource state with the state known to exist in\n" +
 			"the actual cloud provider. Any such changes are adopted into the current stack. Note that if\n" +
 			"the program text isn't updated accordingly, subsequent updates may still appear to be out of\n" +
-			"synch with respect to the cloud provider's source of truth.\n" +
+			"sync with respect to the cloud provider's source of truth.\n" +
 			"\n" +
 			"The program to run is loaded from the project in the current directory. Use the `-C` or\n" +
 			"`--cwd` flag to use a different directory.",
@@ -138,7 +138,7 @@ func newRefreshCmd() *cobra.Command {
 				}
 
 				err = validateUnsupportedRemoteFlags(expectNop, nil, false, "", jsonDisplay, nil,
-					nil, "", showConfig, showReplacementSteps, showSames, false,
+					nil, "", showConfig, false, showReplacementSteps, showSames, false,
 					suppressOutputs, "default", targets, nil, nil,
 					false, "", stackConfigFile)
 				if err != nil {
@@ -183,16 +183,25 @@ func newRefreshCmd() *cobra.Command {
 			if err != nil {
 				return result.FromError(fmt.Errorf("getting stack decrypter: %w", err))
 			}
+			encrypter, err := sm.Encrypter()
+			if err != nil {
+				return result.FromError(fmt.Errorf("getting stack encrypter: %w", err))
+			}
 
 			stackName := s.Ref().Name().String()
-			configErr := workspace.ValidateStackConfigAndApplyProjectConfig(stackName, proj, cfg.Config, decrypter)
+			configErr := workspace.ValidateStackConfigAndApplyProjectConfig(
+				stackName,
+				proj,
+				cfg.Environment,
+				cfg.Config,
+				encrypter,
+				decrypter)
 			if configErr != nil {
 				return result.FromError(fmt.Errorf("validating stack config: %w", configErr))
 			}
 
 			if skipPendingCreates && clearPendingCreates {
-				return result.FromError(fmt.Errorf(
-					"cannot set both --skip-pending-creates and --clear-pending-creates"))
+				return result.FromError(errors.New("cannot set both --skip-pending-creates and --clear-pending-creates"))
 			}
 
 			// First we handle explicit create->imports we were given
@@ -371,7 +380,7 @@ func filterMapPendingCreates(
 		var pending []resource.Operation
 		for _, op := range snap.PendingOperations {
 			if op.Resource == nil {
-				return fmt.Errorf("found operation without resource")
+				return errors.New("found operation without resource")
 			}
 			if op.Type != resource.OperationTypeCreating {
 				pending = append(pending, op)

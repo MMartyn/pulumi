@@ -6,7 +6,7 @@ import copy
 import warnings
 import pulumi
 import pulumi.runtime
-from typing import Any, Callable, Mapping, Optional, Sequence, Union, overload
+from typing import Any, Mapping, Optional, Sequence, Union, overload
 from ... import _utilities
 from ... import _enums as _root_enums
 from ... import _inputs as _root_inputs
@@ -26,39 +26,22 @@ class RubberTreeArgs:
         """
         The set of arguments for constructing a RubberTree resource.
         """
-        RubberTreeArgs._configure(
-            lambda key, value: pulumi.set(__self__, key, value),
-            diameter=diameter,
-            type=type,
-            container=container,
-            farm=farm,
-            size=size,
-        )
-    @staticmethod
-    def _configure(
-             _setter: Callable[[Any, Any], None],
-             diameter: Optional[pulumi.Input['Diameter']] = None,
-             type: Optional[pulumi.Input['RubberTreeVariety']] = None,
-             container: Optional[pulumi.Input['_root_inputs.ContainerArgs']] = None,
-             farm: Optional[pulumi.Input[Union['Farm', str]]] = None,
-             size: Optional[pulumi.Input['TreeSize']] = None,
-             opts: Optional[pulumi.ResourceOptions]=None):
         if diameter is None:
             diameter = 6
-        _setter("diameter", diameter)
+        pulumi.set(__self__, "diameter", diameter)
         if type is None:
             type = 'Burgundy'
-        _setter("type", type)
+        pulumi.set(__self__, "type", type)
         if container is not None:
-            _setter("container", container)
+            pulumi.set(__self__, "container", container)
         if farm is None:
             farm = '(unknown)'
         if farm is not None:
-            _setter("farm", farm)
+            pulumi.set(__self__, "farm", farm)
         if size is None:
             size = 'medium'
         if size is not None:
-            _setter("size", size)
+            pulumi.set(__self__, "size", size)
 
     @property
     @pulumi.getter
@@ -113,19 +96,10 @@ class _RubberTreeState:
         """
         Input properties used for looking up and filtering RubberTree resources.
         """
-        _RubberTreeState._configure(
-            lambda key, value: pulumi.set(__self__, key, value),
-            farm=farm,
-        )
-    @staticmethod
-    def _configure(
-             _setter: Callable[[Any, Any], None],
-             farm: Optional[pulumi.Input[Union['Farm', str]]] = None,
-             opts: Optional[pulumi.ResourceOptions]=None):
         if farm is None:
             farm = '(unknown)'
         if farm is not None:
-            _setter("farm", farm)
+            pulumi.set(__self__, "farm", farm)
 
     @property
     @pulumi.getter
@@ -171,10 +145,6 @@ class RubberTree(pulumi.CustomResource):
         if resource_args is not None:
             __self__._internal_init(resource_name, opts, **resource_args.__dict__)
         else:
-            kwargs = kwargs or {}
-            def _setter(key, value):
-                kwargs[key] = value
-            RubberTreeArgs._configure(_setter, **kwargs)
             __self__._internal_init(resource_name, *args, **kwargs)
 
     def _internal_init(__self__,
@@ -194,11 +164,6 @@ class RubberTree(pulumi.CustomResource):
                 raise TypeError('__props__ is only valid when passed in combination with a valid opts.id to get an existing resource')
             __props__ = RubberTreeArgs.__new__(RubberTreeArgs)
 
-            if container is not None and not isinstance(container, _root_inputs.ContainerArgs):
-                container = container or {}
-                def _setter(key, value):
-                    container[key] = value
-                _root_inputs.ContainerArgs._configure(_setter, **container)
             __props__.__dict__["container"] = container
             if diameter is None:
                 diameter = 6

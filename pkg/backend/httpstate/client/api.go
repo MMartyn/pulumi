@@ -1,4 +1,4 @@
-// Copyright 2016-2018, Pulumi Corporation.
+// Copyright 2016-2023, Pulumi Corporation.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -23,7 +23,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"reflect"
 	"runtime"
 	"strings"
 	"time"
@@ -35,6 +34,7 @@ import (
 	"github.com/pulumi/pulumi/pkg/v3/version"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/apitype"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/diag"
+	"github.com/pulumi/pulumi/sdk/v3/go/common/tokens"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/util/contract"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/util/httputil"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/util/logging"
@@ -45,11 +45,15 @@ const (
 	apiRequestDetailLogLevel = 11 // log level for logging extra details about API requests and responses
 )
 
+func UserAgent() string {
+	return fmt.Sprintf("pulumi-cli/1 (%s; %s)", version.Version, runtime.GOOS)
+}
+
 // StackIdentifier is the set of data needed to identify a Pulumi Cloud stack.
 type StackIdentifier struct {
 	Owner   string
 	Project string
-	Stack   string
+	Stack   tokens.StackName
 }
 
 func (s StackIdentifier) String() string {
@@ -89,6 +93,12 @@ type httpCallOptions struct {
 
 	// GzipCompress compresses the request using gzip before sending it.
 	GzipCompress bool
+
+	// Header is any additional headers to add to the request.
+	Header http.Header
+
+	// ErrorResponse is an optional response body for errors.
+	ErrorResponse any
 }
 
 // apiAccessToken is an implementation of accessToken for Pulumi API tokens (i.e. tokens of kind
@@ -263,10 +273,14 @@ func pulumiAPICall(ctx context.Context,
 	req = req.WithContext(ctx)
 	req.Header.Set("Content-Type", "application/json")
 
+	// Set headers from the incoming options.
+	for k, v := range opts.Header {
+		req.Header[k] = v
+	}
+
 	// Add a User-Agent header to allow for the backend to make breaking API changes while preserving
 	// backwards compatibility.
-	userAgent := fmt.Sprintf("pulumi-cli/1 (%s; %s)", version.Version, runtime.GOOS)
-	req.Header.Set("User-Agent", userAgent)
+	req.Header.Set("User-Agent", UserAgent())
 	// Specify the specific API version we accept.
 	req.Header.Set("Accept", "application/vnd.pulumi+8")
 
@@ -339,16 +353,25 @@ func pulumiAPICall(ctx context.Context,
 		if err != nil {
 			return "", nil, fmt.Errorf("API call failed (%s), could not read response: %w", resp.Status, err)
 		}
-
-		var errResp apitype.ErrorResponse
-		if err = json.Unmarshal(respBody, &errResp); err != nil {
-			errResp.Code = resp.StatusCode
-			errResp.Message = strings.TrimSpace(string(respBody))
-		}
-		return "", nil, &errResp
+		return "", nil, decodeError(respBody, resp.StatusCode, opts)
 	}
 
 	return url, resp, nil
+}
+
+func decodeError(respBody []byte, statusCode int, opts httpCallOptions) error {
+	if opts.ErrorResponse != nil {
+		if err := json.Unmarshal(respBody, opts.ErrorResponse); err == nil {
+			return opts.ErrorResponse.(error)
+		}
+	}
+
+	var errResp apitype.ErrorResponse
+	if err := json.Unmarshal(respBody, &errResp); err != nil {
+		errResp.Code = statusCode
+		errResp.Message = strings.TrimSpace(string(respBody))
+	}
+	return &errResp
 }
 
 // restClient is an abstraction for calling the Pulumi REST API.
@@ -411,6 +434,10 @@ func (c *defaultRESTClient) Call(ctx context.Context, diag diag.Sink, cloudAPI, 
 	if err != nil {
 		return err
 	}
+	if respPtr, ok := respObj.(**http.Response); ok {
+		*respPtr = resp
+		return nil
+	}
 
 	// Read API response
 	respBody, err := readBody(resp)
@@ -422,13 +449,13 @@ func (c *defaultRESTClient) Call(ctx context.Context, diag diag.Sink, cloudAPI, 
 	}
 
 	if respObj != nil {
-		bytes := reflect.TypeOf([]byte(nil))
-		if typ := reflect.TypeOf(respObj); typ == reflect.PtrTo(bytes) {
+		switch respObj := respObj.(type) {
+		case *[]byte:
 			// Return the raw bytes of the response body.
-			*respObj.(*[]byte) = respBody
-		} else if typ == bytes {
-			return fmt.Errorf("Can't unmarshal response body to []byte. Try *[]byte")
-		} else {
+			*respObj = respBody
+		case []byte:
+			return errors.New("Can't unmarshal response body to []byte. Try *[]byte")
+		default:
 			// Else, unmarshal as JSON.
 			if err = json.Unmarshal(respBody, respObj); err != nil {
 				return fmt.Errorf("unmarshalling response object: %w", err)

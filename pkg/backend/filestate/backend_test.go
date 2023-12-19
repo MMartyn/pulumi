@@ -31,6 +31,7 @@ import (
 	"github.com/pulumi/pulumi/sdk/v3/go/common/diag"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/diag/colors"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/encoding"
+	"github.com/pulumi/pulumi/sdk/v3/go/common/env"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource/config"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/testing/diagtest"
@@ -108,7 +109,7 @@ func TestGetLogsForTargetWithNoSnapshot(t *testing.T) {
 	t.Parallel()
 
 	target := &deploy.Target{
-		Name:      "test",
+		Name:      tokens.MustParseStackName("test"),
 		Config:    config.Map{},
 		Decrypter: config.NopDecrypter,
 		Snapshot:  nil,
@@ -119,12 +120,12 @@ func TestGetLogsForTargetWithNoSnapshot(t *testing.T) {
 	assert.Nil(t, res)
 }
 
-func makeUntypedDeployment(name tokens.QName, phrase, state string) (*apitype.UntypedDeployment, error) {
+func makeUntypedDeployment(name string, phrase, state string) (*apitype.UntypedDeployment, error) {
 	return makeUntypedDeploymentTimestamp(name, phrase, state, nil, nil)
 }
 
 func makeUntypedDeploymentTimestamp(
-	name tokens.QName,
+	name string,
 	phrase, state string,
 	created, modified *time.Time,
 ) (*apitype.UntypedDeployment, error) {
@@ -237,7 +238,7 @@ func TestDrillError(t *testing.T) {
 		t.Fatalf("unexpected error %v when parsing stack reference", err)
 	}
 	_, err = b.GetStack(ctx, stackRef)
-	assert.Nil(t, err)
+	assert.NoError(t, err)
 }
 
 func TestCancel(t *testing.T) {
@@ -561,7 +562,7 @@ func TestLocalBackendRejectsStackInitOptions(t *testing.T) {
 
 	// • Create a mock local backend
 	tmpDir := t.TempDir()
-	dirURI := fmt.Sprintf("file://%s", filepath.ToSlash(tmpDir))
+	dirURI := "file://" + filepath.ToSlash(tmpDir)
 	local, err := New(context.Background(), diagtest.LogSink(t), dirURI, nil)
 	assert.NoError(t, err)
 	ctx := context.Background()
@@ -646,12 +647,10 @@ func TestOptIntoLegacyFolderStructure(t *testing.T) {
 
 	tmpDir := t.TempDir()
 	ctx := context.Background()
+	s := make(env.MapStore)
+	s[env.SelfManagedStateLegacyLayout.Var().Name()] = "true"
 	b, err := newLocalBackend(ctx, diagtest.LogSink(t), "file://"+filepath.ToSlash(tmpDir), nil,
-		&localBackendOptions{
-			Getenv: mapGetenv(map[string]string{
-				"PULUMI_SELF_MANAGED_STATE_LEGACY_LAYOUT": "true",
-			}),
-		},
+		&localBackendOptions{Env: env.NewEnv(s)},
 	)
 	require.NoError(t, err)
 
@@ -865,7 +864,7 @@ func TestNew_legacyFileWarning(t *testing.T) {
 	tests := []struct {
 		desc    string
 		files   map[string]string
-		env     map[string]string
+		env     env.MapStore
 		wantOut string
 	}{
 		{
@@ -923,9 +922,7 @@ func TestNew_legacyFileWarning(t *testing.T) {
 			sink := diag.DefaultSink(io.Discard, &buff, diag.FormatOptions{Color: colors.Never})
 
 			_, err = newLocalBackend(ctx, sink, "file://"+filepath.ToSlash(stateDir), nil,
-				&localBackendOptions{
-					Getenv: mapGetenv(tt.env),
-				})
+				&localBackendOptions{Env: env.NewEnv(tt.env)})
 			require.NoError(t, err)
 
 			assert.Equal(t, tt.wantOut, buff.String())
@@ -1073,12 +1070,16 @@ func TestLegacyUpgrade_ProjectsForDetachedStacks(t *testing.T) {
 	// For the first two stacks, we'll return project names to upgrade them.
 	// For the third stack, we will not set a project name, and it should be skipped.
 	err = b.Upgrade(ctx, &UpgradeOptions{
-		ProjectsForDetachedStacks: func(stacks []tokens.Name) (projects []tokens.Name, err error) {
-			assert.ElementsMatch(t, []tokens.Name{"foo", "bar", "baz"}, stacks)
+		ProjectsForDetachedStacks: func(stacks []tokens.StackName) (projects []tokens.Name, err error) {
+			assert.ElementsMatch(t, []tokens.StackName{
+				tokens.MustParseStackName("foo"),
+				tokens.MustParseStackName("bar"),
+				tokens.MustParseStackName("baz"),
+			}, stacks)
 
 			projects = make([]tokens.Name, len(stacks))
 			for idx, stack := range stacks {
-				switch stack {
+				switch stack.String() {
 				case "foo":
 					projects[idx] = "proj1"
 				case "bar":
@@ -1145,8 +1146,10 @@ func TestLegacyUpgrade_ProjectsForDetachedStacks_error(t *testing.T) {
 
 	giveErr := errors.New("canceled operation")
 	err = b.Upgrade(ctx, &UpgradeOptions{
-		ProjectsForDetachedStacks: func(stacks []tokens.Name) (projects []tokens.Name, err error) {
-			assert.Equal(t, []tokens.Name{"bar"}, stacks)
+		ProjectsForDetachedStacks: func(stacks []tokens.StackName) (projects []tokens.Name, err error) {
+			assert.Equal(t, []tokens.StackName{
+				tokens.MustParseStackName("bar"),
+			}, stacks)
 			return nil, giveErr
 		},
 	})
@@ -1280,15 +1283,15 @@ func TestCreateStack_gzip(t *testing.T) {
 
 	stateDir := t.TempDir()
 	ctx := context.Background()
+
+	s := make(env.MapStore)
+	s[env.SelfManagedGzip.Var().Name()] = "true"
+
 	b, err := newLocalBackend(
 		ctx,
 		diagtest.LogSink(t), "file://"+filepath.ToSlash(stateDir),
 		&workspace.Project{Name: "testproj"},
-		&localBackendOptions{
-			Getenv: mapGetenv(map[string]string{
-				"PULUMI_SELF_MANAGED_STATE_GZIP": "true",
-			}),
-		},
+		&localBackendOptions{Env: env.NewEnv(s)},
 	)
 	require.NoError(t, err)
 
@@ -1308,15 +1311,15 @@ func TestCreateStack_retainCheckpoints(t *testing.T) {
 
 	stateDir := t.TempDir()
 	ctx := context.Background()
+
+	s := make(env.MapStore)
+	s[env.SelfManagedRetainCheckpoints.Var().Name()] = "true"
+
 	b, err := newLocalBackend(
 		ctx,
 		diagtest.LogSink(t), "file://"+filepath.ToSlash(stateDir),
 		&workspace.Project{Name: "testproj"},
-		&localBackendOptions{
-			Getenv: mapGetenv(map[string]string{
-				"PULUMI_RETAIN_CHECKPOINTS": "true",
-			}),
-		},
+		&localBackendOptions{Env: env.NewEnv(s)},
 	)
 	require.NoError(t, err)
 
@@ -1347,10 +1350,49 @@ func TestCreateStack_retainCheckpoints(t *testing.T) {
 		"file with a timestamp extension not found in %v", got)
 }
 
-// mapGetenv builds an os.Getenv-like function
-// that returns values from the given map.
-func mapGetenv(m map[string]string) func(string) string {
-	return func(key string) string {
-		return m[key]
+//nolint:paralleltest // mutates global state
+func TestDisableIntegrityChecking(t *testing.T) {
+	stateDir := t.TempDir()
+	ctx := context.Background()
+	b, err := New(ctx, diagtest.LogSink(t), "file://"+filepath.ToSlash(stateDir), &workspace.Project{Name: "testproj"})
+	require.NoError(t, err)
+
+	ref, err := b.ParseStackReference("stack")
+	require.NoError(t, err)
+
+	s, err := b.CreateStack(ctx, ref, "", nil)
+	require.NoError(t, err)
+
+	// make up a bad stack
+	deployment := apitype.UntypedDeployment{
+		Version: 3,
+		Deployment: json.RawMessage(`{
+			"resources": [
+				{
+					"urn": "urn:pulumi:stack::proj::type::name1",
+					"type": "type",
+					"parent": "urn:pulumi:stack::proj::type::name2"
+				},
+				{
+					"urn": "urn:pulumi:stack::proj::type::name2",
+					"type": "type"
+				}
+			]
+		}`),
 	}
+
+	// Import deployment doesn't verify the deployment
+	err = b.ImportDeployment(ctx, s, &deployment)
+	require.NoError(t, err)
+
+	backend.DisableIntegrityChecking = false
+	snap, err := s.Snapshot(ctx, stack.DefaultSecretsProvider)
+	require.ErrorContains(t, err,
+		"child resource urn:pulumi:stack::proj::type::name1's parent urn:pulumi:stack::proj::type::name2 comes after it")
+	assert.Nil(t, snap)
+
+	backend.DisableIntegrityChecking = true
+	snap, err = s.Snapshot(ctx, stack.DefaultSecretsProvider)
+	require.NoError(t, err)
+	assert.NotNil(t, snap)
 }

@@ -445,14 +445,62 @@ export class LocalWorkspace implements Workspace {
         await this.runPulumiCmd(["stack", "rm", "--yes", stackName]);
     }
     /**
+     * Adds environments to the end of a stack's import list. Imported environments are merged in order
+     * per the ESC merge rules. The list of environments behaves as if it were the import list in an anonymous
+     * environment.
+     *
+     * @param stackName The stack to operate on
+     * @param environments The names of the environments to add to the stack's configuration
+     */
+    async addEnvironments(stackName: string, ...environments: string[]): Promise<void> {
+        let ver = this._pulumiVersion;
+        if (ver === undefined) {
+            // Assume an old version. Doesn't really matter what this is as long as it's pre-3.95.
+            ver = semver.parse("3.0.0")!;
+        }
+
+        // 3.95 added this command (https://github.com/pulumi/pulumi/releases/tag/v3.95.0)
+        if (ver.compare("3.95.0") < 0) {
+            throw new Error(`addEnvironments requires Pulumi version >= 3.95.0`);
+        }
+
+        await this.runPulumiCmd(["config", "env", "add", ...environments, "--stack", stackName, "--yes"]);
+    }
+    /**
+     * Removes an environment from a stack's import list.
+     *
+     * @param stackName The stack to operate on
+     * @param environment The name of the environment to remove from the stack's configuration
+     */
+    async removeEnvironment(stackName: string, environment: string): Promise<void> {
+        let ver = this._pulumiVersion;
+        if (ver === undefined) {
+            // Assume an old version. Doesn't really matter what this is as long as it's pre-3.95.
+            ver = semver.parse("3.0.0")!;
+        }
+
+        // 3.95 added this command (https://github.com/pulumi/pulumi/releases/tag/v3.95.0)
+        if (ver.compare("3.95.0") < 0) {
+            throw new Error(`removeEnvironments requires Pulumi version >= 3.95.0`);
+        }
+
+        await this.runPulumiCmd(["config", "env", "rm", environment, "--stack", stackName, "--yes"]);
+    }
+    /**
      * Returns the value associated with the specified stack name and key,
      * scoped to the current workspace. LocalWorkspace reads this config from the matching Pulumi.stack.yaml file.
      *
      * @param stackName The stack to read config from
      * @param key The key to use for the config lookup
+     * @param path The key contains a path to a property in a map or list to get
      */
-    async getConfig(stackName: string, key: string): Promise<ConfigValue> {
-        const result = await this.runPulumiCmd(["config", "get", key, "--json", "--stack", stackName]);
+    async getConfig(stackName: string, key: string, path?: boolean): Promise<ConfigValue> {
+        const args = ["config", "get"];
+        if (path) {
+            args.push("--path");
+        }
+        args.push(key, "--json", "--stack", stackName);
+        const result = await this.runPulumiCmd(args);
         return JSON.parse(result.stdout);
     }
     /**
@@ -472,33 +520,33 @@ export class LocalWorkspace implements Workspace {
      * @param stackName The stack to operate on
      * @param key The config key to set
      * @param value The value to set
+     * @param path The key contains a path to a property in a map or list to set
      */
-    async setConfig(stackName: string, key: string, value: ConfigValue): Promise<void> {
+    async setConfig(stackName: string, key: string, value: ConfigValue, path?: boolean): Promise<void> {
+        const args = ["config", "set"];
+        if (path) {
+            args.push("--path");
+        }
         const secretArg = value.secret ? "--secret" : "--plaintext";
-        await this.runPulumiCmd([
-            "config",
-            "set",
-            key,
-            "--stack",
-            stackName,
-            secretArg,
-            "--non-interactive",
-            "--",
-            value.value,
-        ]);
+        args.push(key, "--stack", stackName, secretArg, "--non-interactive", "--", value.value);
+        await this.runPulumiCmd(args);
     }
     /**
      * Sets all values in the provided config map for the specified stack name.
      * LocalWorkspace writes the config to the matching Pulumi.<stack>.yaml file in Workspace.WorkDir().
      *
      * @param stackName The stack to operate on
-     * @param config The `ConfigMap` to upsert against the existing config.
+     * @param config The `ConfigMap` to upsert against the existing config
+     * @param path The keys contain a path to a property in a map or list to set
      */
-    async setAllConfig(stackName: string, config: ConfigMap): Promise<void> {
-        let args = ["config", "set-all", "--stack", stackName];
+    async setAllConfig(stackName: string, config: ConfigMap, path?: boolean): Promise<void> {
+        const args = ["config", "set-all", "--stack", stackName];
+        if (path) {
+            args.push("--path");
+        }
         for (const [key, value] of Object.entries(config)) {
             const secretArg = value.secret ? "--secret" : "--plaintext";
-            args = [...args, secretArg, `${key}=${value.value}`];
+            args.push(secretArg, `${key}=${value.value}`);
         }
 
         await this.runPulumiCmd(args);
@@ -509,9 +557,14 @@ export class LocalWorkspace implements Workspace {
      *
      * @param stackName The stack to operate on
      * @param key The config key to remove
+     * @param path The key contains a path to a property in a map or list to remove
      */
-    async removeConfig(stackName: string, key: string): Promise<void> {
-        await this.runPulumiCmd(["config", "rm", key, "--stack", stackName]);
+    async removeConfig(stackName: string, key: string, path?: boolean): Promise<void> {
+        const args = ["config", "rm", key, "--stack", stackName];
+        if (path) {
+            args.push("--path");
+        }
+        await this.runPulumiCmd(args);
     }
     /**
      *
@@ -520,9 +573,15 @@ export class LocalWorkspace implements Workspace {
      *
      * @param stackName The stack to operate on
      * @param keys The list of keys to remove from the underlying config
+     * @param path The keys contain a path to a property in a map or list to remove
      */
-    async removeAllConfig(stackName: string, keys: string[]): Promise<void> {
-        await this.runPulumiCmd(["config", "rm-all", "--stack", stackName, ...keys]);
+    async removeAllConfig(stackName: string, keys: string[], path?: boolean): Promise<void> {
+        const args = ["config", "rm-all", "--stack", stackName];
+        if (path) {
+            args.push("--path");
+        }
+        args.push(...keys);
+        await this.runPulumiCmd(args);
     }
     /**
      * Gets and sets the config map used with the last update for Stack matching stack name.

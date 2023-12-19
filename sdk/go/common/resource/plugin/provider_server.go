@@ -411,12 +411,17 @@ func (p *providerServer) Update(ctx context.Context, req *pulumirpc.UpdateReques
 func (p *providerServer) Delete(ctx context.Context, req *pulumirpc.DeleteRequest) (*pbempty.Empty, error) {
 	urn, id := resource.URN(req.GetUrn()), resource.ID(req.GetId())
 
-	state, err := UnmarshalProperties(req.GetProperties(), p.unmarshalOptions("state"))
+	inputs, err := UnmarshalProperties(req.GetOldInputs(), p.unmarshalOptions("inputs"))
 	if err != nil {
 		return nil, err
 	}
 
-	if _, err = p.provider.Delete(urn, id, state, req.GetTimeout()); err != nil {
+	outputs, err := UnmarshalProperties(req.GetProperties(), p.unmarshalOptions("outputs"))
+	if err != nil {
+		return nil, err
+	}
+
+	if _, err = p.provider.Delete(urn, id, inputs, outputs, req.GetTimeout()); err != nil {
 		return nil, err
 	}
 
@@ -426,7 +431,7 @@ func (p *providerServer) Delete(ctx context.Context, req *pulumirpc.DeleteReques
 func (p *providerServer) Construct(ctx context.Context,
 	req *pulumirpc.ConstructRequest,
 ) (*pulumirpc.ConstructResponse, error) {
-	typ, name, parent := tokens.Type(req.GetType()), tokens.QName(req.GetName()), resource.URN(req.GetParent())
+	typ, name, parent := tokens.Type(req.GetType()), req.GetName(), resource.URN(req.GetParent())
 
 	inputs, err := UnmarshalProperties(req.GetInputs(), p.unmarshalOptions("inputs"))
 	if err != nil {

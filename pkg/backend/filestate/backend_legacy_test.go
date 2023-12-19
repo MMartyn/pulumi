@@ -3,7 +3,6 @@ package filestate
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"os"
 	"path"
 	"path/filepath"
@@ -101,7 +100,7 @@ func TestDrillError_legacy(t *testing.T) {
 		t.Fatalf("unexpected error %v when parsing stack reference", err)
 	}
 	_, err = b.GetStack(ctx, stackRef)
-	assert.Nil(t, err)
+	assert.NoError(t, err)
 }
 
 func TestCancel_legacy(t *testing.T) {
@@ -349,7 +348,7 @@ func TestLocalBackendRejectsStackInitOptions_legacy(t *testing.T) {
 
 	// • Create a mock local backend
 	tmpDir := markLegacyStore(t, t.TempDir())
-	dirURI := fmt.Sprintf("file://%s", filepath.ToSlash(tmpDir))
+	dirURI := "file://" + filepath.ToSlash(tmpDir)
 	local, err := New(context.Background(), diagtest.LogSink(t), dirURI, nil)
 	assert.NoError(t, err)
 	ctx := context.Background()

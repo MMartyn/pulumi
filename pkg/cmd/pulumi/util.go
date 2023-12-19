@@ -564,12 +564,7 @@ func readProject() (*workspace.Project, string, error) {
 // readPolicyProject attempts to detect and read a Pulumi PolicyPack project for the current
 // workspace. If the project is successfully detected and read, it is returned along with the path
 // to its containing directory, which will be used as the root of the project's Pulumi program.
-func readPolicyProject() (*workspace.PolicyPackProject, string, string, error) {
-	pwd, err := os.Getwd()
-	if err != nil {
-		return nil, "", "", err
-	}
-
+func readPolicyProject(pwd string) (*workspace.PolicyPackProject, string, string, error) {
 	// Now that we got here, we have a path, so we will try to load it.
 	path, err := workspace.DetectPolicyPackPathFrom(pwd)
 	if err != nil {
@@ -1142,4 +1137,48 @@ func missingNonInteractiveArg(args ...string) error {
 		return fmt.Errorf("Must supply %s and %s unless pulumi is run interactively",
 			strings.Join(args[:len(args)-1], ", "), args[len(args)-1])
 	}
+}
+
+func promptUser(msg string, options []string, defaultOption string, colorization colors.Colorization) string {
+	prompt := "\b" + colorization.Colorize(colors.SpecPrompt+msg+colors.Reset)
+	surveycore.DisableColor = true
+	surveyIcons := survey.WithIcons(func(icons *survey.IconSet) {
+		icons.Question = survey.Icon{}
+		icons.SelectFocus = survey.Icon{Text: colorization.Colorize(colors.BrightGreen + ">" + colors.Reset)}
+	})
+
+	var response string
+	if err := survey.AskOne(&survey.Select{
+		Message: prompt,
+		Options: options,
+		Default: defaultOption,
+	}, &response, surveyIcons); err != nil {
+		return ""
+	}
+	return response
+}
+
+func printTable(table cmdutil.Table, opts *cmdutil.TableRenderOptions) {
+	fprintTable(os.Stdout, table, opts)
+}
+
+func fprintTable(out io.Writer, table cmdutil.Table, opts *cmdutil.TableRenderOptions) {
+	fmt.Fprint(out, renderTable(table, opts))
+}
+
+func renderTable(table cmdutil.Table, opts *cmdutil.TableRenderOptions) string {
+	if opts == nil {
+		opts = &cmdutil.TableRenderOptions{}
+	}
+	if len(opts.HeaderStyle) == 0 {
+		style := make([]colors.Color, len(table.Headers))
+		for i := range style {
+			style[i] = colors.SpecHeadline
+		}
+		opts.HeaderStyle = style
+	}
+	if opts.Color == "" {
+		opts.Color = cmdutil.GetGlobalColorization()
+	}
+	return table.Render(opts)
 }

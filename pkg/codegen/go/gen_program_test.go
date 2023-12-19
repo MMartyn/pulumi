@@ -57,6 +57,8 @@ func TestGenerateProgramVersionSelection(t *testing.T) {
 				{
 					Directory:   "aws-resource-options-4.26",
 					Description: "Resource Options",
+					// TODO[pulumi/pulumi#14873]: Temporarily skip until we've addressed the appdash-data dependency issue.
+					SkipCompile: codegen.NewStringSet("go"),
 				},
 				{
 					Directory:   "aws-resource-options-5.16.2",
@@ -488,6 +490,7 @@ func newTestGenerator(t *testing.T, testFile string) *generator {
 		readDirTempSpiller:  &readDirSpiller{},
 		splatSpiller:        &splatSpiller{},
 		optionalSpiller:     &optionalSpiller{},
+		inlineInvokeSpiller: &inlineInvokeSpiller{},
 		scopeTraversalRoots: codegen.NewStringSet(),
 		arrayHelpers:        make(map[string]*promptToInputArrayHelper),
 		importer:            newFileImporter(),

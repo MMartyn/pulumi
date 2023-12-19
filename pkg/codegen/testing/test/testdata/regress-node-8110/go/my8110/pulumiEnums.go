@@ -78,12 +78,6 @@ func (o MyEnumOutput) ToMyEnumPtrOutputWithContext(ctx context.Context) MyEnumPt
 	}).(MyEnumPtrOutput)
 }
 
-func (o MyEnumOutput) ToOutput(ctx context.Context) pulumix.Output[MyEnum] {
-	return pulumix.Output[MyEnum]{
-		OutputState: o.OutputState,
-	}
-}
-
 func (o MyEnumOutput) ToStringOutput() pulumi.StringOutput {
 	return o.ToStringOutputWithContext(context.Background())
 }
@@ -119,12 +113,6 @@ func (o MyEnumPtrOutput) ToMyEnumPtrOutputWithContext(ctx context.Context) MyEnu
 	return o
 }
 
-func (o MyEnumPtrOutput) ToOutput(ctx context.Context) pulumix.Output[*MyEnum] {
-	return pulumix.Output[*MyEnum]{
-		OutputState: o.OutputState,
-	}
-}
-
 func (o MyEnumPtrOutput) Elem() MyEnumOutput {
 	return o.ApplyT(func(v *MyEnum) MyEnum {
 		if v != nil {
@@ -149,10 +137,11 @@ func (o MyEnumPtrOutput) ToStringPtrOutputWithContext(ctx context.Context) pulum
 	}).(pulumi.StringPtrOutput)
 }
 
-// MyEnumInput is an input type that accepts MyEnumArgs and MyEnumOutput values.
-// You can construct a concrete instance of `MyEnumInput` via:
+// MyEnumInput is an input type that accepts values of the MyEnum enum
+// A concrete instance of `MyEnumInput` can be one of the following:
 //
-//	MyEnumArgs{...}
+//	MyEnumOne
+//	MyEnumTwo
 type MyEnumInput interface {
 	pulumi.Input
 

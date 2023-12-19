@@ -16,7 +16,7 @@ package deploy
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"testing"
 
 	pbempty "github.com/golang/protobuf/ptypes/empty"
@@ -38,30 +38,30 @@ func TestQuerySource_Trivial_Wait(t *testing.T) {
 
 	qs1.forkRun()
 
-	res := qs1.Wait()
-	assert.Nil(t, res)
+	err := qs1.Wait()
+	assert.NoError(t, err)
 	assert.False(t, resmon1.cancelled)
 
-	res = qs1.Wait()
-	assert.Nil(t, res)
+	err = qs1.Wait()
+	assert.NoError(t, err)
 	assert.False(t, resmon1.cancelled)
 
 	// Failure case.
 	resmon2 := mockQueryResmon{}
 	qs2, _ := newTestQuerySource(&resmon2, func(*querySource) error {
-		return fmt.Errorf("failed")
+		return errors.New("failed")
 	})
 
 	qs2.forkRun()
 
-	res = qs2.Wait()
-	assert.False(t, result.IsBail(res))
-	assert.NotNil(t, res.Error())
+	err = qs2.Wait()
+	assert.False(t, result.IsBail(err))
+	assert.Error(t, err)
 	assert.False(t, resmon2.cancelled)
 
-	res = qs2.Wait()
-	assert.False(t, result.IsBail(res))
-	assert.NotNil(t, res.Error())
+	err = qs2.Wait()
+	assert.False(t, result.IsBail(err))
+	assert.Error(t, err)
 	assert.False(t, resmon2.cancelled)
 }
 
@@ -92,12 +92,12 @@ func TestQuerySource_Async_Wait(t *testing.T) {
 	}()
 
 	// Wait for querySource to complete.
-	res := qs1.Wait()
-	assert.Nil(t, res)
+	err := qs1.Wait()
+	assert.NoError(t, err)
 	assert.False(t, resmon1.cancelled)
 
-	res = qs1.Wait()
-	assert.Nil(t, res)
+	err = qs1.Wait()
+	assert.NoError(t, err)
 	assert.False(t, resmon1.cancelled)
 
 	// Cancellation case.
@@ -123,12 +123,12 @@ func TestQuerySource_Async_Wait(t *testing.T) {
 	}()
 
 	// Wait for querySource to complete.
-	res = qs2.Wait()
-	assert.Nil(t, res)
+	err = qs2.Wait()
+	assert.NoError(t, err)
 	assert.True(t, resmon2.cancelled)
 
-	res = qs2.Wait()
-	assert.Nil(t, res)
+	err = qs2.Wait()
+	assert.NoError(t, err)
 	assert.True(t, resmon2.cancelled)
 }
 

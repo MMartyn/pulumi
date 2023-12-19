@@ -19,18 +19,18 @@ import { Provider } from "./provider";
 import * as log from "../log";
 import { Inputs, Output, output } from "../output";
 import * as resource from "../resource";
-import * as settings from "../runtime/settings";
-import * as rpc from "../runtime/rpc";
 import * as config from "../runtime/config";
+import * as rpc from "../runtime/rpc";
+import * as settings from "../runtime/settings";
 import { parseArgs } from "./internals";
 
-const anyproto = require("google-protobuf/google/protobuf/any_pb.js");
-const emptyproto = require("google-protobuf/google/protobuf/empty_pb.js");
-const structproto = require("google-protobuf/google/protobuf/struct_pb.js");
-const provproto = require("../proto/provider_pb.js");
-const provrpc = require("../proto/provider_grpc_pb.js");
-const plugproto = require("../proto/plugin_pb.js");
-const statusproto = require("../proto/status_pb.js");
+import * as anyproto from "google-protobuf/google/protobuf/any_pb";
+import * as emptyproto from "google-protobuf/google/protobuf/empty_pb";
+import * as structproto from "google-protobuf/google/protobuf/struct_pb";
+import * as plugproto from "../proto/plugin_pb";
+import * as provrpc from "../proto/provider_grpc_pb";
+import * as provproto from "../proto/provider_pb";
+import * as statusproto from "../proto/status_pb";
 
 class Server implements grpc.UntypedServiceImplementation {
     engineAddr: string | undefined;
@@ -218,6 +218,9 @@ class Server implements grpc.UntypedServiceImplementation {
                 const result: any = await this.provider.read(id, req.getUrn(), props);
                 resp.setId(result.id);
                 resp.setProperties(structproto.Struct.fromJavaScript(result.props));
+                resp.setInputs(
+                    result.inputs === undefined ? undefined : structproto.Struct.fromJavaScript(result.inputs),
+                );
             } else {
                 // In the event of a missing read, simply return back the input state.
                 resp.setId(id);

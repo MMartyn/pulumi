@@ -78,12 +78,6 @@ func (o ColorOutput) ToColorPtrOutputWithContext(ctx context.Context) ColorPtrOu
 	}).(ColorPtrOutput)
 }
 
-func (o ColorOutput) ToOutput(ctx context.Context) pulumix.Output[Color] {
-	return pulumix.Output[Color]{
-		OutputState: o.OutputState,
-	}
-}
-
 func (o ColorOutput) ToStringOutput() pulumi.StringOutput {
 	return o.ToStringOutputWithContext(context.Background())
 }
@@ -119,12 +113,6 @@ func (o ColorPtrOutput) ToColorPtrOutputWithContext(ctx context.Context) ColorPt
 	return o
 }
 
-func (o ColorPtrOutput) ToOutput(ctx context.Context) pulumix.Output[*Color] {
-	return pulumix.Output[*Color]{
-		OutputState: o.OutputState,
-	}
-}
-
 func (o ColorPtrOutput) Elem() ColorOutput {
 	return o.ApplyT(func(v *Color) Color {
 		if v != nil {
@@ -149,10 +137,11 @@ func (o ColorPtrOutput) ToStringPtrOutputWithContext(ctx context.Context) pulumi
 	}).(pulumi.StringPtrOutput)
 }
 
-// ColorInput is an input type that accepts ColorArgs and ColorOutput values.
-// You can construct a concrete instance of `ColorInput` via:
+// ColorInput is an input type that accepts values of the Color enum
+// A concrete instance of `ColorInput` can be one of the following:
 //
-//	ColorArgs{...}
+//	ColorBlue
+//	ColorRed
 type ColorInput interface {
 	pulumi.Input
 

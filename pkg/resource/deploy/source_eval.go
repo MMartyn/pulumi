@@ -1,4 +1,4 @@
-// Copyright 2016-2018, Pulumi Corporation.
+// Copyright 2016-2023, Pulumi Corporation.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@ package deploy
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"path/filepath"
@@ -99,7 +100,7 @@ func (src *evalSource) Project() tokens.PackageName {
 }
 
 // Stack is the name of the stack being targeted by this evaluation source.
-func (src *evalSource) Stack() tokens.Name {
+func (src *evalSource) Stack() tokens.StackName {
 	return src.runinfo.Target.Name
 }
 
@@ -119,6 +120,11 @@ func (src *evalSource) Iterate(
 
 	// Keep track of any config keys that have secure values.
 	configSecretKeys := src.runinfo.Target.Config.SecureKeys()
+
+	configMap, err := src.runinfo.Target.Config.AsDecryptedPropertyMap(ctx, src.runinfo.Target.Decrypter)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert config to map: %w", err)
+	}
 
 	// First, fire up a resource monitor that will watch for and record resource creation.
 	regChan := make(chan *registerResourceEvent)
@@ -142,7 +148,7 @@ func (src *evalSource) Iterate(
 
 	// Now invoke Run in a goroutine.  All subsequent resource creation events will come in over the gRPC channel,
 	// and we will pump them through the channel.  If the Run call ultimately fails, we need to propagate the error.
-	iter.forkRun(opts, config, configSecretKeys)
+	iter.forkRun(opts, config, configSecretKeys, configMap)
 
 	// Finally, return the fresh iterator that the caller can use to take things from here.
 	return iter, nil
@@ -206,7 +212,9 @@ func (iter *evalSourceIterator) Next() (SourceEvent, error) {
 }
 
 // forkRun performs the evaluation from a distinct goroutine.  This function blocks until it's our turn to go.
-func (iter *evalSourceIterator) forkRun(opts Options, config map[config.Key]string, configSecretKeys []config.Key) {
+func (iter *evalSourceIterator) forkRun(
+	opts Options, config map[config.Key]string, configSecretKeys []config.Key, configPropertyMap resource.PropertyMap,
+) {
 	// Fire up the goroutine to make the RPC invocation against the language runtime.  As this executes, calls
 	// to queue things up in the resource channel will occur, and we will serve them concurrently.
 	go func() {
@@ -220,22 +228,20 @@ func (iter *evalSourceIterator) forkRun(opts Options, config map[config.Key]stri
 			}
 			contract.Assertf(langhost != nil, "expected non-nil language host %s", rt)
 
-			// Make sure to clean up before exiting.
-			defer contract.IgnoreClose(langhost)
-
 			// Now run the actual program.
 			progerr, bail, err := langhost.Run(plugin.RunInfo{
-				MonitorAddress:   iter.mon.Address(),
-				Stack:            string(iter.src.runinfo.Target.Name),
-				Project:          string(iter.src.runinfo.Proj.Name),
-				Pwd:              iter.src.runinfo.Pwd,
-				Program:          iter.src.runinfo.Program,
-				Args:             iter.src.runinfo.Args,
-				Config:           config,
-				ConfigSecretKeys: configSecretKeys,
-				DryRun:           iter.src.dryRun,
-				Parallel:         opts.Parallel,
-				Organization:     string(iter.src.runinfo.Target.Organization),
+				MonitorAddress:    iter.mon.Address(),
+				Stack:             iter.src.runinfo.Target.Name.String(),
+				Project:           string(iter.src.runinfo.Proj.Name),
+				Pwd:               iter.src.runinfo.Pwd,
+				Program:           iter.src.runinfo.Program,
+				Args:              iter.src.runinfo.Args,
+				Config:            config,
+				ConfigSecretKeys:  configSecretKeys,
+				ConfigPropertyMap: configPropertyMap,
+				DryRun:            iter.src.dryRun,
+				Parallel:          opts.Parallel,
+				Organization:      string(iter.src.runinfo.Target.Organization),
 			})
 
 			// Check if we were asked to Bail.  This a special random constant used for that
@@ -384,7 +390,7 @@ func (d *defaultProviders) handleRequest(req providers.ProviderRequest) (provide
 	}
 	if denyCreation {
 		logging.V(5).Infof("denied default provider request for package %s", req)
-		return providers.NewDenyDefaultProvider(tokens.QName(string(req.Package().Name()))), nil
+		return providers.NewDenyDefaultProvider(string(req.Package().Name())), nil
 	}
 
 	// Have we loaded this provider before? Use the existing reference, if so.
@@ -421,9 +427,7 @@ func (d *defaultProviders) handleRequest(req providers.ProviderRequest) (provide
 	logging.V(5).Infof("registered default provider for package %s: %s", req, result.State.URN)
 
 	id := result.State.ID
-	if id == "" {
-		id = providers.UnknownID
-	}
+	contract.Assertf(id != "", "default provider for package %s has no ID", req)
 
 	ref, err = providers.NewReference(result.State.URN, id)
 	contract.Assertf(err == nil, "could not create provider reference with URN %s and ID %s", result.State.URN, id)
@@ -450,7 +454,7 @@ func (d *defaultProviders) shouldDenyRequest(req providers.ProviderRequest) (boo
 	if value, ok := pConfig["disable-default-providers"]; ok {
 		array := []interface{}{}
 		if !value.IsString() {
-			return true, fmt.Errorf("Unexpected encoding of pulumi:disable-default-providers")
+			return true, errors.New("Unexpected encoding of pulumi:disable-default-providers")
 		}
 		if value.StringValue() == "" {
 			// If the list is provided but empty, we don't encode a empty json
@@ -581,7 +585,7 @@ func newResourceMonitor(src *evalSource, provs ProviderSource, regChan chan *reg
 
 	resmon.constructInfo = plugin.ConstructInfo{
 		Project:          string(src.runinfo.Proj.Name),
-		Stack:            string(src.runinfo.Target.Name),
+		Stack:            src.runinfo.Target.Name.String(),
 		Config:           config,
 		ConfigSecretKeys: configSecretKeys,
 		DryRun:           src.dryRun,
@@ -955,7 +959,7 @@ func (rm *resmon) ReadResource(ctx context.Context,
 		return nil, rpcerror.New(codes.InvalidArgument, err.Error())
 	}
 
-	name := tokens.QName(req.GetName())
+	name := req.GetName()
 	parent, err := resource.ParseOptionalURN(req.GetParent())
 	if err != nil {
 		return nil, rpcerror.New(codes.InvalidArgument, fmt.Sprintf("invalid parent URN: %s", err))
@@ -1101,7 +1105,7 @@ func (s *sourcePositions) parseSourcePosition(raw *pulumirpc.SourcePosition) (st
 
 	file := filepath.FromSlash(posURL.Path)
 	if !filepath.IsAbs(file) {
-		return "", fmt.Errorf("source positions must include absolute paths")
+		return "", errors.New("source positions must include absolute paths")
 	}
 	rel, err := filepath.Rel(s.projectRoot, file)
 	if err != nil {
@@ -1175,7 +1179,7 @@ func (rm *resmon) RegisterResource(ctx context.Context,
 	req *pulumirpc.RegisterResourceRequest,
 ) (*pulumirpc.RegisterResourceResponse, error) {
 	// Communicate the type, name, and object information to the iterator that is awaiting us.
-	name := tokens.QName(req.GetName())
+	name := req.GetName()
 	custom := req.GetCustom()
 	remote := req.GetRemote()
 	parent, err := resource.ParseOptionalURN(req.GetParent())
@@ -1599,6 +1603,12 @@ func (rm *resmon) RegisterResource(ctx context.Context,
 	if err != nil {
 		return nil, err
 	}
+
+	// Assert that we never leak the unconfigured provider ID to the language host.
+	contract.Assertf(
+		!providers.IsProviderType(result.State.Type) || result.State.ID != providers.UnconfiguredID,
+		"provider resource %s has unconfigured ID", result.State.URN)
+
 	return &pulumirpc.RegisterResourceResponse{
 		Urn:                  string(result.State.URN),
 		Id:                   string(result.State.ID),
@@ -1713,7 +1723,7 @@ func (g *registerResourceOutputsEvent) Done() {
 
 type readResourceEvent struct {
 	id                      resource.ID
-	name                    tokens.QName
+	name                    string
 	baseType                tokens.Type
 	provider                string
 	parent                  resource.URN
@@ -1729,7 +1739,7 @@ var _ ReadResourceEvent = (*readResourceEvent)(nil)
 func (g *readResourceEvent) event() {}
 
 func (g *readResourceEvent) ID() resource.ID                  { return g.id }
-func (g *readResourceEvent) Name() tokens.QName               { return g.name }
+func (g *readResourceEvent) Name() string                     { return g.name }
 func (g *readResourceEvent) Type() tokens.Type                { return g.baseType }
 func (g *readResourceEvent) Provider() string                 { return g.provider }
 func (g *readResourceEvent) Parent() resource.URN             { return g.parent }

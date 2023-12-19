@@ -15,6 +15,7 @@
 package workspace
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -45,7 +46,7 @@ func TestRetrieveNonExistingTemplate(t *testing.T) {
 			t.Parallel()
 
 			_, err := RetrieveTemplates(templateName, false, tt.templateKind)
-			assert.NotNil(t, err)
+			assert.EqualError(t, err, fmt.Sprintf("template '%s' not found", templateName))
 		})
 	}
 }
@@ -73,7 +74,7 @@ func TestRetrieveStandardTemplate(t *testing.T) {
 		tt := tt
 		t.Run(tt.testName, func(t *testing.T) {
 			repository, err := RetrieveTemplates(tt.templateName, false, tt.templateKind)
-			assert.Nil(t, err)
+			assert.NoError(t, err)
 			assert.Equal(t, false, repository.ShouldDelete)
 
 			// Root should point to Pulumi templates directory
@@ -117,7 +118,7 @@ func TestRetrieveHttpsTemplate(t *testing.T) {
 		tt := tt
 		t.Run(tt.testName, func(t *testing.T) {
 			repository, err := RetrieveTemplates(tt.templateURL, false, tt.templateKind)
-			assert.Nil(t, err)
+			assert.NoError(t, err)
 			assert.Equal(t, true, repository.ShouldDelete)
 
 			// Root should point to a subfolder of a Temp Dir
@@ -134,11 +135,11 @@ func TestRetrieveHttpsTemplate(t *testing.T) {
 			// SubDirectory should exist and contain the template files
 			yamlPath := filepath.Join(repository.SubDirectory, tt.yamlFile)
 			_, err = os.Stat(yamlPath)
-			assert.Nil(t, err)
+			assert.NoError(t, err)
 
 			// Clean Up
 			err = repository.Delete()
-			assert.Nil(t, err)
+			assert.NoError(t, err)
 		})
 	}
 }
@@ -169,7 +170,7 @@ func TestRetrieveHttpsTemplateOffline(t *testing.T) {
 			t.Parallel()
 
 			_, err := RetrieveTemplates(tt.templateURL, true, tt.templateKind)
-			assert.NotNil(t, err)
+			assert.EqualError(t, err, fmt.Sprintf("cannot use %s offline", tt.templateURL))
 		})
 	}
 }
@@ -194,7 +195,7 @@ func TestRetrieveFileTemplate(t *testing.T) {
 		tt := tt
 		t.Run(tt.testName, func(t *testing.T) {
 			repository, err := RetrieveTemplates(".", false, tt.templateKind)
-			assert.Nil(t, err)
+			assert.NoError(t, err)
 			assert.Equal(t, false, repository.ShouldDelete)
 
 			// Both Root and SubDirectory just point to the (existing) specified folder

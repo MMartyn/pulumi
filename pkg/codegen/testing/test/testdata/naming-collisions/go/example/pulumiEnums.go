@@ -78,12 +78,6 @@ func (o ExampleEnumOutput) ToExampleEnumPtrOutputWithContext(ctx context.Context
 	}).(ExampleEnumPtrOutput)
 }
 
-func (o ExampleEnumOutput) ToOutput(ctx context.Context) pulumix.Output[ExampleEnum] {
-	return pulumix.Output[ExampleEnum]{
-		OutputState: o.OutputState,
-	}
-}
-
 func (o ExampleEnumOutput) ToStringOutput() pulumi.StringOutput {
 	return o.ToStringOutputWithContext(context.Background())
 }
@@ -119,12 +113,6 @@ func (o ExampleEnumPtrOutput) ToExampleEnumPtrOutputWithContext(ctx context.Cont
 	return o
 }
 
-func (o ExampleEnumPtrOutput) ToOutput(ctx context.Context) pulumix.Output[*ExampleEnum] {
-	return pulumix.Output[*ExampleEnum]{
-		OutputState: o.OutputState,
-	}
-}
-
 func (o ExampleEnumPtrOutput) Elem() ExampleEnumOutput {
 	return o.ApplyT(func(v *ExampleEnum) ExampleEnum {
 		if v != nil {
@@ -149,10 +137,11 @@ func (o ExampleEnumPtrOutput) ToStringPtrOutputWithContext(ctx context.Context) 
 	}).(pulumi.StringPtrOutput)
 }
 
-// ExampleEnumInput is an input type that accepts ExampleEnumArgs and ExampleEnumOutput values.
-// You can construct a concrete instance of `ExampleEnumInput` via:
+// ExampleEnumInput is an input type that accepts values of the ExampleEnum enum
+// A concrete instance of `ExampleEnumInput` can be one of the following:
 //
-//	ExampleEnumArgs{...}
+//	ExampleEnumOne
+//	ExampleEnumTwo
 type ExampleEnumInput interface {
 	pulumi.Input
 
@@ -260,12 +249,6 @@ func (o ExampleEnumInputEnumOutput) ToExampleEnumInputEnumPtrOutputWithContext(c
 	}).(ExampleEnumInputEnumPtrOutput)
 }
 
-func (o ExampleEnumInputEnumOutput) ToOutput(ctx context.Context) pulumix.Output[ExampleEnumInputEnum] {
-	return pulumix.Output[ExampleEnumInputEnum]{
-		OutputState: o.OutputState,
-	}
-}
-
 func (o ExampleEnumInputEnumOutput) ToStringOutput() pulumi.StringOutput {
 	return o.ToStringOutputWithContext(context.Background())
 }
@@ -301,12 +284,6 @@ func (o ExampleEnumInputEnumPtrOutput) ToExampleEnumInputEnumPtrOutputWithContex
 	return o
 }
 
-func (o ExampleEnumInputEnumPtrOutput) ToOutput(ctx context.Context) pulumix.Output[*ExampleEnumInputEnum] {
-	return pulumix.Output[*ExampleEnumInputEnum]{
-		OutputState: o.OutputState,
-	}
-}
-
 func (o ExampleEnumInputEnumPtrOutput) Elem() ExampleEnumInputEnumOutput {
 	return o.ApplyT(func(v *ExampleEnumInputEnum) ExampleEnumInputEnum {
 		if v != nil {
@@ -331,10 +308,11 @@ func (o ExampleEnumInputEnumPtrOutput) ToStringPtrOutputWithContext(ctx context.
 	}).(pulumi.StringPtrOutput)
 }
 
-// ExampleEnumInputEnumInput is an input type that accepts ExampleEnumInputEnumArgs and ExampleEnumInputEnumOutput values.
-// You can construct a concrete instance of `ExampleEnumInputEnumInput` via:
+// ExampleEnumInputEnumInput is an input type that accepts values of the ExampleEnumInputEnum enum
+// A concrete instance of `ExampleEnumInputEnumInput` can be one of the following:
 //
-//	ExampleEnumInputEnumArgs{...}
+//	ExampleEnumInputEnumOne
+//	ExampleEnumInputEnumTwo
 type ExampleEnumInputEnumInput interface {
 	pulumi.Input
 
@@ -442,12 +420,6 @@ func (o ResourceTypeEnumOutput) ToResourceTypeEnumPtrOutputWithContext(ctx conte
 	}).(ResourceTypeEnumPtrOutput)
 }
 
-func (o ResourceTypeEnumOutput) ToOutput(ctx context.Context) pulumix.Output[ResourceTypeEnum] {
-	return pulumix.Output[ResourceTypeEnum]{
-		OutputState: o.OutputState,
-	}
-}
-
 func (o ResourceTypeEnumOutput) ToStringOutput() pulumi.StringOutput {
 	return o.ToStringOutputWithContext(context.Background())
 }
@@ -483,12 +455,6 @@ func (o ResourceTypeEnumPtrOutput) ToResourceTypeEnumPtrOutputWithContext(ctx co
 	return o
 }
 
-func (o ResourceTypeEnumPtrOutput) ToOutput(ctx context.Context) pulumix.Output[*ResourceTypeEnum] {
-	return pulumix.Output[*ResourceTypeEnum]{
-		OutputState: o.OutputState,
-	}
-}
-
 func (o ResourceTypeEnumPtrOutput) Elem() ResourceTypeEnumOutput {
 	return o.ApplyT(func(v *ResourceTypeEnum) ResourceTypeEnum {
 		if v != nil {
@@ -513,10 +479,11 @@ func (o ResourceTypeEnumPtrOutput) ToStringPtrOutputWithContext(ctx context.Cont
 	}).(pulumi.StringPtrOutput)
 }
 
-// ResourceTypeEnumInput is an input type that accepts ResourceTypeEnumArgs and ResourceTypeEnumOutput values.
-// You can construct a concrete instance of `ResourceTypeEnumInput` via:
+// ResourceTypeEnumInput is an input type that accepts values of the ResourceTypeEnum enum
+// A concrete instance of `ResourceTypeEnumInput` can be one of the following:
 //
-//	ResourceTypeEnumArgs{...}
+//	ResourceTypeEnumHaha
+//	ResourceTypeEnumBusiness
 type ResourceTypeEnumInput interface {
 	pulumi.Input
 

@@ -1,4 +1,4 @@
-// Copyright 2016-2018, Pulumi Corporation.
+// Copyright 2016-2023, Pulumi Corporation.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -60,7 +60,7 @@ func fixedProgram(steps []RegisterResourceEvent) deploytest.ProgramFunc {
 	return func(_ plugin.RunInfo, resmon *deploytest.ResourceMonitor) error {
 		for _, s := range steps {
 			g := s.Goal()
-			urn, id, outs, err := resmon.RegisterResource(g.Type, string(g.Name), g.Custom, deploytest.ResourceOptions{
+			urn, id, outs, err := resmon.RegisterResource(g.Type, g.Name, g.Custom, deploytest.ResourceOptions{
 				Parent:       g.Parent,
 				Protect:      g.Protect,
 				Dependencies: g.Dependencies,
@@ -120,7 +120,8 @@ func newProviderEvent(pkg, name string, inputs resource.PropertyMap, parent reso
 	}
 	goal := &resource.Goal{
 		Type:       providers.MakeProviderType(tokens.Package(pkg)),
-		Name:       tokens.QName(name),
+		ID:         "id",
+		Name:       name,
 		Custom:     true,
 		Properties: inputs,
 		Parent:     parent,
@@ -154,7 +155,7 @@ func TestRegisterNoDefaultProviders(t *testing.T) {
 
 	runInfo := &EvalRunInfo{
 		Proj:   &workspace.Project{Name: "test"},
-		Target: &Target{Name: "test"},
+		Target: &Target{Name: tokens.MustParseStackName("test")},
 	}
 
 	newURN := func(t tokens.Type, name string, parent resource.URN) resource.URN {
@@ -162,7 +163,7 @@ func TestRegisterNoDefaultProviders(t *testing.T) {
 		if parent != "" {
 			pt = parent.Type()
 		}
-		return resource.NewURN(runInfo.Target.Name.Q(), runInfo.Proj.Name, pt, t, tokens.QName(name))
+		return resource.NewURN(runInfo.Target.Name.Q(), runInfo.Proj.Name, pt, t, name)
 	}
 
 	newProviderURN := func(pkg tokens.Package, name string, parent resource.URN) resource.URN {
@@ -213,13 +214,13 @@ func TestRegisterNoDefaultProviders(t *testing.T) {
 	ctx, err := newTestPluginContext(t, fixedProgram(steps))
 	assert.NoError(t, err)
 
-	iter, res := NewEvalSource(ctx, runInfo, nil, false).Iterate(context.Background(), Options{}, &testProviderSource{})
-	assert.Nil(t, res)
+	iter, err := NewEvalSource(ctx, runInfo, nil, false).Iterate(context.Background(), Options{}, &testProviderSource{})
+	assert.NoError(t, err)
 
 	processed := 0
 	for {
-		event, res := iter.Next()
-		assert.Nil(t, res)
+		event, err := iter.Next()
+		assert.NoError(t, err)
 
 		if event == nil {
 			break
@@ -231,7 +232,7 @@ func TestRegisterNoDefaultProviders(t *testing.T) {
 		if providers.IsProviderType(goal.Type) {
 			assert.NotEqual(t, "default", goal.Name)
 		}
-		urn := newURN(goal.Type, string(goal.Name), goal.Parent)
+		urn := newURN(goal.Type, goal.Name, goal.Parent)
 		id := resource.ID("")
 		if goal.Custom {
 			id = "id"
@@ -253,7 +254,7 @@ func TestRegisterDefaultProviders(t *testing.T) {
 
 	runInfo := &EvalRunInfo{
 		Proj:   &workspace.Project{Name: "test"},
-		Target: &Target{Name: "test"},
+		Target: &Target{Name: tokens.MustParseStackName("test")},
 	}
 
 	newURN := func(t tokens.Type, name string, parent resource.URN) resource.URN {
@@ -261,7 +262,7 @@ func TestRegisterDefaultProviders(t *testing.T) {
 		if parent != "" {
 			pt = parent.Type()
 		}
-		return resource.NewURN(runInfo.Target.Name.Q(), runInfo.Proj.Name, pt, t, tokens.QName(name))
+		return resource.NewURN(runInfo.Target.Name.Q(), runInfo.Proj.Name, pt, t, name)
 	}
 
 	componentURN := newURN("component", "component", "")
@@ -296,13 +297,13 @@ func TestRegisterDefaultProviders(t *testing.T) {
 	ctx, err := newTestPluginContext(t, fixedProgram(steps))
 	assert.NoError(t, err)
 
-	iter, res := NewEvalSource(ctx, runInfo, nil, false).Iterate(context.Background(), Options{}, &testProviderSource{})
-	assert.Nil(t, res)
+	iter, err := NewEvalSource(ctx, runInfo, nil, false).Iterate(context.Background(), Options{}, &testProviderSource{})
+	assert.NoError(t, err)
 
 	processed, defaults := 0, make(map[string]struct{})
 	for {
-		event, res := iter.Next()
-		assert.Nil(t, res)
+		event, err := iter.Next()
+		assert.NoError(t, err)
 
 		if event == nil {
 			break
@@ -311,14 +312,14 @@ func TestRegisterDefaultProviders(t *testing.T) {
 		reg := event.(RegisterResourceEvent)
 
 		goal := reg.Goal()
-		urn := newURN(goal.Type, string(goal.Name), goal.Parent)
+		urn := newURN(goal.Type, goal.Name, goal.Parent)
 		id := resource.ID("")
 		if goal.Custom {
 			id = "id"
 		}
 
 		if providers.IsProviderType(goal.Type) {
-			assert.Equal(t, "default", string(goal.Name))
+			assert.Equal(t, "default", goal.Name)
 			ref, err := providers.NewReference(urn, id)
 			assert.NoError(t, err)
 			_, ok := defaults[ref.String()]
@@ -347,7 +348,7 @@ func TestReadInvokeNoDefaultProviders(t *testing.T) {
 
 	runInfo := &EvalRunInfo{
 		Proj:   &workspace.Project{Name: "test"},
-		Target: &Target{Name: "test"},
+		Target: &Target{Name: tokens.MustParseStackName("test")},
 	}
 
 	newURN := func(t tokens.Type, name string, parent resource.URN) resource.URN {
@@ -355,7 +356,7 @@ func TestReadInvokeNoDefaultProviders(t *testing.T) {
 		if parent != "" {
 			pt = parent.Type()
 		}
-		return resource.NewURN(runInfo.Target.Name.Q(), runInfo.Proj.Name, pt, t, tokens.QName(name))
+		return resource.NewURN(runInfo.Target.Name.Q(), runInfo.Proj.Name, pt, t, name)
 	}
 
 	newProviderURN := func(pkg tokens.Package, name string, parent resource.URN) resource.URN {
@@ -409,19 +410,19 @@ func TestReadInvokeNoDefaultProviders(t *testing.T) {
 	ctx, err := newTestPluginContext(t, program)
 	assert.NoError(t, err)
 
-	iter, res := NewEvalSource(ctx, runInfo, nil, false).Iterate(context.Background(), Options{}, providerSource)
-	assert.Nil(t, res)
+	iter, err := NewEvalSource(ctx, runInfo, nil, false).Iterate(context.Background(), Options{}, providerSource)
+	assert.NoError(t, err)
 
 	reads := 0
 	for {
-		event, res := iter.Next()
-		assert.Nil(t, res)
+		event, err := iter.Next()
+		assert.NoError(t, err)
 		if event == nil {
 			break
 		}
 
 		read := event.(ReadResourceEvent)
-		urn := newURN(read.Type(), string(read.Name()), read.Parent())
+		urn := newURN(read.Type(), read.Name(), read.Parent())
 		read.Done(&ReadResult{
 			State: resource.NewState(read.Type(), urn, true, false, read.ID(), read.Properties(),
 				resource.PropertyMap{}, read.Parent(), false, false, read.Dependencies(), nil, read.Provider(), nil,
@@ -439,7 +440,7 @@ func TestReadInvokeDefaultProviders(t *testing.T) {
 
 	runInfo := &EvalRunInfo{
 		Proj:   &workspace.Project{Name: "test"},
-		Target: &Target{Name: "test"},
+		Target: &Target{Name: tokens.MustParseStackName("test")},
 	}
 
 	newURN := func(t tokens.Type, name string, parent resource.URN) resource.URN {
@@ -447,7 +448,7 @@ func TestReadInvokeDefaultProviders(t *testing.T) {
 		if parent != "" {
 			pt = parent.Type()
 		}
-		return resource.NewURN(runInfo.Target.Name.Q(), runInfo.Proj.Name, pt, t, tokens.QName(name))
+		return resource.NewURN(runInfo.Target.Name.Q(), runInfo.Proj.Name, pt, t, name)
 	}
 
 	invokes := int32(0)
@@ -484,13 +485,13 @@ func TestReadInvokeDefaultProviders(t *testing.T) {
 
 	providerSource := &testProviderSource{providers: make(map[providers.Reference]plugin.Provider)}
 
-	iter, res := NewEvalSource(ctx, runInfo, nil, false).Iterate(context.Background(), Options{}, providerSource)
-	assert.Nil(t, res)
+	iter, err := NewEvalSource(ctx, runInfo, nil, false).Iterate(context.Background(), Options{}, providerSource)
+	assert.NoError(t, err)
 
 	reads, registers := 0, 0
 	for {
-		event, res := iter.Next()
-		assert.Nil(t, res)
+		event, err := iter.Next()
+		assert.NoError(t, err)
 
 		if event == nil {
 			break
@@ -499,10 +500,10 @@ func TestReadInvokeDefaultProviders(t *testing.T) {
 		switch e := event.(type) {
 		case RegisterResourceEvent:
 			goal := e.Goal()
-			urn, id := newURN(goal.Type, string(goal.Name), goal.Parent), resource.ID("id")
+			urn, id := newURN(goal.Type, goal.Name, goal.Parent), resource.ID("id")
 
 			assert.True(t, providers.IsProviderType(goal.Type))
-			assert.Equal(t, "default", string(goal.Name))
+			assert.Equal(t, "default", goal.Name)
 			ref, err := providers.NewReference(urn, id)
 			assert.NoError(t, err)
 			_, ok := providerSource.GetProvider(ref)
@@ -517,7 +518,7 @@ func TestReadInvokeDefaultProviders(t *testing.T) {
 			registers++
 
 		case ReadResourceEvent:
-			urn := newURN(e.Type(), string(e.Name()), e.Parent())
+			urn := newURN(e.Type(), e.Name(), e.Parent())
 			e.Done(&ReadResult{
 				State: resource.NewState(e.Type(), urn, true, false, e.ID(), e.Properties(),
 					resource.PropertyMap{}, e.Parent(), false, false, e.Dependencies(), nil, e.Provider(), nil, false,
@@ -580,7 +581,7 @@ func TestDisableDefaultProviders(t *testing.T) {
 
 			runInfo := &EvalRunInfo{
 				Proj:   &workspace.Project{Name: "test"},
-				Target: &Target{Name: "test"},
+				Target: &Target{Name: tokens.MustParseStackName("test")},
 			}
 			if tt.disableDefault {
 				disableDefaultProviders(runInfo, "pkgA")
@@ -591,7 +592,7 @@ func TestDisableDefaultProviders(t *testing.T) {
 				if parent != "" {
 					pt = parent.Type()
 				}
-				return resource.NewURN(runInfo.Target.Name.Q(), runInfo.Proj.Name, pt, t, tokens.QName(name))
+				return resource.NewURN(runInfo.Target.Name.Q(), runInfo.Proj.Name, pt, t, name)
 			}
 
 			newProviderURN := func(pkg tokens.Package, name string, parent resource.URN) resource.URN {
@@ -661,18 +662,18 @@ func TestDisableDefaultProviders(t *testing.T) {
 			ctx, err := newTestPluginContext(t, program)
 			assert.NoError(t, err)
 
-			iter, res := NewEvalSource(ctx, runInfo, nil, false).Iterate(context.Background(), Options{}, providerSource)
-			assert.Nil(t, res)
+			iter, err := NewEvalSource(ctx, runInfo, nil, false).Iterate(context.Background(), Options{}, providerSource)
+			assert.NoError(t, err)
 
 			for {
-				event, res := iter.Next()
-				assert.Nil(t, res)
+				event, err := iter.Next()
+				assert.NoError(t, err)
 				if event == nil {
 					break
 				}
 				switch event := event.(type) {
 				case ReadResourceEvent:
-					urn := newURN(event.Type(), string(event.Name()), event.Parent())
+					urn := newURN(event.Type(), event.Name(), event.Parent())
 					event.Done(&ReadResult{
 						State: resource.NewState(event.Type(), urn, true, false, event.ID(), event.Properties(),
 							resource.PropertyMap{}, event.Parent(), false, false, event.Dependencies(), nil, event.Provider(), nil,
@@ -680,9 +681,9 @@ func TestDisableDefaultProviders(t *testing.T) {
 					})
 					reads++
 				case RegisterResourceEvent:
-					urn := newURN(event.Goal().Type, string(event.Goal().Name), event.Goal().Parent)
+					urn := newURN(event.Goal().Type, event.Goal().Name, event.Goal().Parent)
 					event.Done(&RegisterResult{
-						State: resource.NewState(event.Goal().Type, urn, true, false, event.Goal().ID, event.Goal().Properties,
+						State: resource.NewState(event.Goal().Type, urn, true, false, "id", event.Goal().Properties,
 							resource.PropertyMap{}, event.Goal().Parent, false, false, event.Goal().Dependencies, nil,
 							event.Goal().Provider, nil, false, nil, nil, nil, "", false, "", nil, nil, ""),
 					})
@@ -723,7 +724,7 @@ func TestResouceMonitor_remoteComponentResourceOptions(t *testing.T) {
 
 	runInfo := &EvalRunInfo{
 		Proj:   &workspace.Project{Name: "test"},
-		Target: &Target{Name: "test"},
+		Target: &Target{Name: tokens.MustParseStackName("test")},
 	}
 
 	newURN := func(t tokens.Type, name string, parent resource.URN) resource.URN {
@@ -731,7 +732,7 @@ func TestResouceMonitor_remoteComponentResourceOptions(t *testing.T) {
 		if parent != "" {
 			pt = parent.Type()
 		}
-		return resource.NewURN(runInfo.Target.Name.Q(), runInfo.Proj.Name, pt, t, tokens.QName(name))
+		return resource.NewURN(runInfo.Target.Name.Q(), runInfo.Proj.Name, pt, t, name)
 	}
 
 	// Used when we need a *bool.
@@ -896,12 +897,16 @@ func TestResouceMonitor_remoteComponentResourceOptions(t *testing.T) {
 				switch ev := ev.(type) {
 				case RegisterResourceEvent:
 					goal := ev.Goal()
+					id := goal.ID
+					if id == "" {
+						id = "id"
+					}
 					ev.Done(&RegisterResult{
 						State: &resource.State{
 							Type:         goal.Type,
-							URN:          newURN(goal.Type, string(goal.Name), goal.Parent),
+							URN:          newURN(goal.Type, goal.Name, goal.Parent),
 							Custom:       goal.Custom,
-							ID:           goal.ID,
+							ID:           id,
 							Inputs:       goal.Properties,
 							Parent:       goal.Parent,
 							Dependencies: goal.Dependencies,
@@ -974,12 +979,12 @@ func TestResouceMonitor_remoteComponentResourceOptions(t *testing.T) {
 
 // 	providerSource := &testProviderSource{providers: make(map[providers.Reference]plugin.Provider)}
 
-// 	iter, res := NewEvalSource(ctx, runInfo, nil, false).Iterate(context.Background(), Options{}, providerSource)
-// 	assert.Nil(t, res)
+// 	iter, err := NewEvalSource(ctx, runInfo, nil, false).Iterate(context.Background(), Options{}, providerSource)
+// 	assert.NoError(t, err)
 // 	registrations, reads := 0, 0
 // 	for {
-// 		event, res := iter.Next()
-// 		assert.Nil(t, res)
+// 		event, err := iter.Next()
+// 		assert.NoError(t, err)
 
 // 		if event == nil {
 // 			break
@@ -988,11 +993,11 @@ func TestResouceMonitor_remoteComponentResourceOptions(t *testing.T) {
 // 		switch e := event.(type) {
 // 		case RegisterResourceEvent:
 // 			goal := e.Goal()
-// 			urn, id := newURN(goal.Type, string(goal.Name), goal.Parent), resource.ID("id")
+// 			urn, id := newURN(goal.Type, goal.Name, goal.Parent), resource.ID("id")
 
 // 			assert.True(t, providers.IsProviderType(goal.Type))
 // 			// The name of the provider resource is derived from the version requested.
-// 			assert.Equal(t, "default_0_18_0", string(goal.Name))
+// 			assert.Equal(t, "default_0_18_0", goal.Name)
 // 			ref, err := providers.NewReference(urn, id)
 // 			assert.NoError(t, err)
 // 			_, ok := providerSource.GetProvider(ref)
@@ -1064,12 +1069,12 @@ func TestResouceMonitor_remoteComponentResourceOptions(t *testing.T) {
 
 // 	providerSource := &testProviderSource{providers: make(map[providers.Reference]plugin.Provider)}
 
-// 	iter, res := NewEvalSource(ctx, runInfo, nil, false).Iterate(context.Background(), Options{}, providerSource)
-// 	assert.Nil(t, res)
+// 	iter, err := NewEvalSource(ctx, runInfo, nil, false).Iterate(context.Background(), Options{}, providerSource)
+// 	assert.NoError(t, err)
 // 	registered181, registered182 := false, false
 // 	for {
-// 		event, res := iter.Next()
-// 		assert.Nil(t, res)
+// 		event, err := iter.Next()
+// 		assert.NoError(t, err)
 
 // 		if event == nil {
 // 			break
@@ -1078,7 +1083,7 @@ func TestResouceMonitor_remoteComponentResourceOptions(t *testing.T) {
 // 		switch e := event.(type) {
 // 		case RegisterResourceEvent:
 // 			goal := e.Goal()
-// 			urn, id := newURN(goal.Type, string(goal.Name), goal.Parent), resource.ID("id")
+// 			urn, id := newURN(goal.Type, goal.Name, goal.Parent), resource.ID("id")
 
 // 			if providers.IsProviderType(goal.Type) {
 // 				switch goal.Name {

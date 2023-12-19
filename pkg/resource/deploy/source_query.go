@@ -1,4 +1,4 @@
-// Copyright 2016-2018, Pulumi Corporation.
+// Copyright 2016-2023, Pulumi Corporation.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,6 +16,7 @@ package deploy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 
@@ -50,12 +51,12 @@ func NewQuerySource(cancel context.Context, plugctx *plugin.Context, client Back
 	provs ProviderSource,
 ) (QuerySource, error) {
 	// Create a new builtin provider. This provider implements features such as `getStack`.
-	builtins := newBuiltinProvider(client, nil)
+	builtins := newBuiltinProvider(client, nil, plugctx.Diag)
 
 	reg := providers.NewRegistry(plugctx.Host, false, builtins)
 
 	// Allows queryResmon to communicate errors loading providers.
-	providerRegErrChan := make(chan result.Result)
+	providerRegErrChan := make(chan error)
 
 	// First, fire up a resource monitor that will disallow all resource operations, as well as
 	// service calls for things like resource ouptuts of state snapshots.
@@ -147,9 +148,6 @@ func runLangPlugin(src *querySource) error {
 	}
 	contract.Assertf(langhost != nil, "expected non-nil language host %s", rt)
 
-	// Make sure to clean up before exiting.
-	defer contract.IgnoreClose(langhost)
-
 	// Decrypt the configuration.
 	var config map[config.Key]string
 	if src.runinfo.Target != nil {
@@ -161,7 +159,7 @@ func runLangPlugin(src *querySource) error {
 
 	var name, organization string
 	if src.runinfo.Target != nil {
-		name = string(src.runinfo.Target.Name)
+		name = src.runinfo.Target.Name.String()
 		organization = string(src.runinfo.Target.Organization)
 	}
 
@@ -198,7 +196,7 @@ func runLangPlugin(src *querySource) error {
 func newQueryResourceMonitor(
 	builtins *builtinProvider, defaultProviderInfo map[tokens.Package]workspace.PluginSpec,
 	provs ProviderSource, reg *providers.Registry, plugctx *plugin.Context,
-	providerRegErrChan chan<- result.Result, tracingSpan opentracing.Span, runinfo *EvalRunInfo,
+	providerRegErrChan chan<- error, tracingSpan opentracing.Span, runinfo *EvalRunInfo,
 ) (*queryResmon, error) {
 	// Create our cancellation channel.
 	cancel := make(chan bool)
@@ -222,18 +220,22 @@ func newQueryResourceMonitor(
 
 			inputs, _, err := reg.Check(urn, resource.PropertyMap{}, e.goal.Properties, false, nil)
 			if err != nil {
-				providerRegErrChan <- result.FromError(err)
+				providerRegErrChan <- err
 				return
 			}
-			_, _, _, err = reg.Create(urn, inputs, 9999, false)
+			id, _, _, err := reg.Create(urn, inputs, 9999, false)
 			if err != nil {
-				providerRegErrChan <- result.FromError(err)
+				providerRegErrChan <- err
 				return
 			}
+
+			contract.Assertf(id != "", "expected non-empty provider ID")
+			contract.Assertf(id != providers.UnknownID, "expected non-unknown provider ID")
 
 			e.done <- &RegisterResult{State: &resource.State{
 				Type: e.goal.Type,
 				URN:  urn,
+				ID:   id,
 			}}
 		}
 	}()
@@ -272,7 +274,7 @@ func newQueryResourceMonitor(
 
 	var name string
 	if runinfo.Target != nil {
-		name = string(runinfo.Target.Name)
+		name = runinfo.Target.Name.String()
 	}
 
 	queryResmon.callInfo = plugin.CallInfo{
@@ -516,14 +518,14 @@ func (rm *queryResmon) Call(ctx context.Context, req *pulumirpc.CallRequest) (*p
 func (rm *queryResmon) ReadResource(ctx context.Context,
 	req *pulumirpc.ReadResourceRequest,
 ) (*pulumirpc.ReadResourceResponse, error) {
-	return nil, fmt.Errorf("Query mode does not support reading resources")
+	return nil, errors.New("Query mode does not support reading resources")
 }
 
 // RegisterResource is invoked by a language process when a new resource has been allocated.
 func (rm *queryResmon) RegisterResource(ctx context.Context,
 	req *pulumirpc.RegisterResourceRequest,
 ) (*pulumirpc.RegisterResourceResponse, error) {
-	return nil, fmt.Errorf("Query mode does not support creating, updating, or deleting resources")
+	return nil, errors.New("Query mode does not support creating, updating, or deleting resources")
 }
 
 // RegisterResourceOutputs records some new output properties for a resource that have arrived after its initial
@@ -531,7 +533,7 @@ func (rm *queryResmon) RegisterResource(ctx context.Context,
 func (rm *queryResmon) RegisterResourceOutputs(ctx context.Context,
 	req *pulumirpc.RegisterResourceOutputsRequest,
 ) (*pbempty.Empty, error) {
-	return nil, fmt.Errorf("Query mode does not support registering resource operations")
+	return nil, errors.New("Query mode does not support registering resource operations")
 }
 
 // SupportsFeature the query resmon is able to have secrets passed to it, which may be arguments to invoke calls.

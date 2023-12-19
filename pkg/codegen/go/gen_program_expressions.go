@@ -2,6 +2,7 @@ package gen
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -376,7 +377,7 @@ func (g *generator) GenFunctionCallExpression(w io.Writer, expr *model.FunctionC
 func outputVersionFunctionArgTypeName(t model.Type, cache *Cache) (string, error) {
 	schemaType, ok := pcl.GetSchemaForType(t)
 	if !ok {
-		return "", fmt.Errorf("No schema.Type type found for the given model.Type")
+		return "", errors.New("No schema.Type type found for the given model.Type")
 	}
 
 	objType, ok := schemaType.(*schema.ObjectType)
@@ -397,7 +398,7 @@ func outputVersionFunctionArgTypeName(t model.Type, cache *Cache) (string, error
 		ty = pkg.tokenToType(objType.Token)
 	}
 
-	return fmt.Sprintf("%sOutputArgs", strings.TrimSuffix(ty, "Args")), nil
+	return strings.TrimSuffix(ty, "Args") + "OutputArgs", nil
 }
 
 func (g *generator) GenIndexExpression(w io.Writer, expr *model.IndexExpression) {
@@ -527,7 +528,11 @@ func (g *generator) genObjectConsExpressionWithTypeName(
 		temps = append(temps, kTemps...)
 		item.Key = k
 		x, xTemps := g.lowerExpression(item.Value, item.Value.Type())
+		x, invokeTemps := g.rewriteInlineInvokes(x)
 		temps = append(temps, xTemps...)
+		for _, t := range invokeTemps {
+			temps = append(temps, t)
+		}
 		item.Value = x
 		expr.Items[i] = item
 	}
@@ -748,7 +753,11 @@ func (g *generator) genTupleConsExpression(w io.Writer, expr *model.TupleConsExp
 	var temps []interface{}
 	for i, item := range expr.Expressions {
 		item, itemTemps := g.lowerExpression(item, item.Type())
+		item, invokeTemps := g.rewriteInlineInvokes(item)
 		temps = append(temps, itemTemps...)
+		for _, t := range invokeTemps {
+			temps = append(temps, t)
+		}
 		expr.Expressions[i] = item
 	}
 	g.genTemps(w, temps)
@@ -851,7 +860,7 @@ func (g *generator) argumentTypeName(expr model.Expression, destType model.Type,
 				elmType = valType
 			}
 			if allSameType && elmType != "" {
-				return fmt.Sprintf("%sMap", elmType)
+				return elmType + "Map"
 			}
 			return "pulumi.Map"
 		}
@@ -859,15 +868,21 @@ func (g *generator) argumentTypeName(expr model.Expression, destType model.Type,
 	case *model.MapType:
 		valType := g.argumentTypeName(nil, destType.ElementType, isInput)
 		if isInput {
+			if Title(valType) == "pulumi.Any" {
+				return "pulumi.Map"
+			}
 			return fmt.Sprintf("pulumi.%sMap", Title(valType))
 		}
-		return fmt.Sprintf("map[string]%s", valType)
+		return "map[string]" + valType
 	case *model.ListType:
 		argTypeName := g.argumentTypeName(nil, destType.ElementType, isInput)
 		if strings.HasPrefix(argTypeName, "pulumi.") && argTypeName != "pulumi.Resource" {
-			return fmt.Sprintf("%sArray", argTypeName)
+			if argTypeName == "pulumi.Any" {
+				return "pulumi.Array"
+			}
+			return argTypeName + "Array"
 		}
-		return fmt.Sprintf("[]%s", argTypeName)
+		return "[]" + argTypeName
 	case *model.TupleType:
 		// attempt to collapse tuple types. intentionally does not use model.UnifyTypes
 		// correct go code requires all types to match, or use of interface{}
@@ -890,9 +905,12 @@ func (g *generator) argumentTypeName(expr model.Expression, destType model.Type,
 		if elmType != nil {
 			argTypeName := g.argumentTypeName(nil, elmType, isInput)
 			if strings.HasPrefix(argTypeName, "pulumi.") && argTypeName != "pulumi.Resource" {
-				return fmt.Sprintf("%sArray", argTypeName)
+				if argTypeName == "pulumi.Any" {
+					return "pulumi.Array"
+				}
+				return argTypeName + "Array"
 			}
-			return fmt.Sprintf("[]%s", argTypeName)
+			return "[]" + argTypeName
 		}
 
 		if isInput {
@@ -990,6 +1008,7 @@ func (g *generator) lowerExpression(expr model.Expression, typ model.Type) (
 	expr = pcl.RewritePropertyReferences(expr)
 	expr, diags := pcl.RewriteApplies(expr, nameInfo(0), false /*TODO*/)
 	expr, sTemps, splatDiags := g.rewriteSplat(expr, g.splatSpiller)
+
 	expr, convertDiags := pcl.RewriteConversions(expr, typ)
 	expr, tTemps, ternDiags := g.rewriteTernaries(expr, g.ternaryTempSpiller)
 	expr, jTemps, jsonDiags := g.rewriteToJSON(expr)
@@ -1024,7 +1043,7 @@ func (g *generator) lowerExpression(expr model.Expression, typ model.Type) (
 }
 
 func (g *generator) genNYI(w io.Writer, reason string, vs ...interface{}) {
-	message := fmt.Sprintf("not yet implemented: %s", fmt.Sprintf(reason, vs...))
+	message := "not yet implemented: " + fmt.Sprintf(reason, vs...)
 	g.diagnostics = append(g.diagnostics, &hcl.Diagnostic{
 		Severity: hcl.DiagWarning,
 		Summary:  message,
@@ -1215,8 +1234,8 @@ var functionPackages = map[string][]string{
 	"toBase64":         {"encoding/base64"},
 	"fromBase64":       {"encoding/base64"},
 	"toJSON":           {"encoding/json"},
-	"sha1":             {"fmt", "crypto/sha1"},
-	"filebase64sha256": {"fmt", "crypto/sha256", "os"},
+	"sha1":             {"crypto/sha1", "encoding/hex"},
+	"filebase64sha256": {"crypto/sha256", "os"},
 	"cwd":              {"os"},
 	"singleOrNone":     {"fmt"},
 }

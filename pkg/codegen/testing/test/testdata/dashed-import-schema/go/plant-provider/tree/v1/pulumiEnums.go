@@ -78,12 +78,6 @@ func (o DiameterOutput) ToDiameterPtrOutputWithContext(ctx context.Context) Diam
 	}).(DiameterPtrOutput)
 }
 
-func (o DiameterOutput) ToOutput(ctx context.Context) pulumix.Output[Diameter] {
-	return pulumix.Output[Diameter]{
-		OutputState: o.OutputState,
-	}
-}
-
 func (o DiameterOutput) ToFloat64Output() pulumi.Float64Output {
 	return o.ToFloat64OutputWithContext(context.Background())
 }
@@ -119,12 +113,6 @@ func (o DiameterPtrOutput) ToDiameterPtrOutputWithContext(ctx context.Context) D
 	return o
 }
 
-func (o DiameterPtrOutput) ToOutput(ctx context.Context) pulumix.Output[*Diameter] {
-	return pulumix.Output[*Diameter]{
-		OutputState: o.OutputState,
-	}
-}
-
 func (o DiameterPtrOutput) Elem() DiameterOutput {
 	return o.ApplyT(func(v *Diameter) Diameter {
 		if v != nil {
@@ -149,10 +137,11 @@ func (o DiameterPtrOutput) ToFloat64PtrOutputWithContext(ctx context.Context) pu
 	}).(pulumi.Float64PtrOutput)
 }
 
-// DiameterInput is an input type that accepts DiameterArgs and DiameterOutput values.
-// You can construct a concrete instance of `DiameterInput` via:
+// DiameterInput is an input type that accepts values of the Diameter enum
+// A concrete instance of `DiameterInput` can be one of the following:
 //
-//	DiameterArgs{...}
+//	DiameterSixinch
+//	DiameterTwelveinch
 type DiameterInput interface {
 	pulumi.Input
 
@@ -260,12 +249,6 @@ func (o FarmOutput) ToFarmPtrOutputWithContext(ctx context.Context) FarmPtrOutpu
 	}).(FarmPtrOutput)
 }
 
-func (o FarmOutput) ToOutput(ctx context.Context) pulumix.Output[Farm] {
-	return pulumix.Output[Farm]{
-		OutputState: o.OutputState,
-	}
-}
-
 func (o FarmOutput) ToStringOutput() pulumi.StringOutput {
 	return o.ToStringOutputWithContext(context.Background())
 }
@@ -301,12 +284,6 @@ func (o FarmPtrOutput) ToFarmPtrOutputWithContext(ctx context.Context) FarmPtrOu
 	return o
 }
 
-func (o FarmPtrOutput) ToOutput(ctx context.Context) pulumix.Output[*Farm] {
-	return pulumix.Output[*Farm]{
-		OutputState: o.OutputState,
-	}
-}
-
 func (o FarmPtrOutput) Elem() FarmOutput {
 	return o.ApplyT(func(v *Farm) Farm {
 		if v != nil {
@@ -331,10 +308,11 @@ func (o FarmPtrOutput) ToStringPtrOutputWithContext(ctx context.Context) pulumi.
 	}).(pulumi.StringPtrOutput)
 }
 
-// FarmInput is an input type that accepts FarmArgs and FarmOutput values.
-// You can construct a concrete instance of `FarmInput` via:
+// FarmInput is an input type that accepts values of the Farm enum
+// A concrete instance of `FarmInput` can be one of the following:
 //
-//	FarmArgs{...}
+//	Farm_Pulumi_Planters_Inc_
+//	Farm_Plants_R_Us
 type FarmInput interface {
 	pulumi.Input
 
@@ -447,12 +425,6 @@ func (o RubberTreeVarietyOutput) ToRubberTreeVarietyPtrOutputWithContext(ctx con
 	}).(RubberTreeVarietyPtrOutput)
 }
 
-func (o RubberTreeVarietyOutput) ToOutput(ctx context.Context) pulumix.Output[RubberTreeVariety] {
-	return pulumix.Output[RubberTreeVariety]{
-		OutputState: o.OutputState,
-	}
-}
-
 func (o RubberTreeVarietyOutput) ToStringOutput() pulumi.StringOutput {
 	return o.ToStringOutputWithContext(context.Background())
 }
@@ -488,12 +460,6 @@ func (o RubberTreeVarietyPtrOutput) ToRubberTreeVarietyPtrOutputWithContext(ctx 
 	return o
 }
 
-func (o RubberTreeVarietyPtrOutput) ToOutput(ctx context.Context) pulumix.Output[*RubberTreeVariety] {
-	return pulumix.Output[*RubberTreeVariety]{
-		OutputState: o.OutputState,
-	}
-}
-
 func (o RubberTreeVarietyPtrOutput) Elem() RubberTreeVarietyOutput {
 	return o.ApplyT(func(v *RubberTreeVariety) RubberTreeVariety {
 		if v != nil {
@@ -518,10 +484,12 @@ func (o RubberTreeVarietyPtrOutput) ToStringPtrOutputWithContext(ctx context.Con
 	}).(pulumi.StringPtrOutput)
 }
 
-// RubberTreeVarietyInput is an input type that accepts RubberTreeVarietyArgs and RubberTreeVarietyOutput values.
-// You can construct a concrete instance of `RubberTreeVarietyInput` via:
+// RubberTreeVarietyInput is an input type that accepts values of the RubberTreeVariety enum
+// A concrete instance of `RubberTreeVarietyInput` can be one of the following:
 //
-//	RubberTreeVarietyArgs{...}
+//	RubberTreeVarietyBurgundy
+//	RubberTreeVarietyRuby
+//	RubberTreeVarietyTineke
 type RubberTreeVarietyInput interface {
 	pulumi.Input
 
@@ -587,12 +555,6 @@ func (i RubberTreeVarietyArray) ToRubberTreeVarietyArrayOutputWithContext(ctx co
 	return pulumi.ToOutputWithContext(ctx, i).(RubberTreeVarietyArrayOutput)
 }
 
-func (i RubberTreeVarietyArray) ToOutput(ctx context.Context) pulumix.Output[[]RubberTreeVariety] {
-	return pulumix.Output[[]RubberTreeVariety]{
-		OutputState: i.ToRubberTreeVarietyArrayOutputWithContext(ctx).OutputState,
-	}
-}
-
 type RubberTreeVarietyArrayOutput struct{ *pulumi.OutputState }
 
 func (RubberTreeVarietyArrayOutput) ElementType() reflect.Type {
@@ -605,12 +567,6 @@ func (o RubberTreeVarietyArrayOutput) ToRubberTreeVarietyArrayOutput() RubberTre
 
 func (o RubberTreeVarietyArrayOutput) ToRubberTreeVarietyArrayOutputWithContext(ctx context.Context) RubberTreeVarietyArrayOutput {
 	return o
-}
-
-func (o RubberTreeVarietyArrayOutput) ToOutput(ctx context.Context) pulumix.Output[[]RubberTreeVariety] {
-	return pulumix.Output[[]RubberTreeVariety]{
-		OutputState: o.OutputState,
-	}
 }
 
 func (o RubberTreeVarietyArrayOutput) Index(i pulumi.IntInput) RubberTreeVarietyOutput {
@@ -687,12 +643,6 @@ func (o TreeSizeOutput) ToTreeSizePtrOutputWithContext(ctx context.Context) Tree
 	}).(TreeSizePtrOutput)
 }
 
-func (o TreeSizeOutput) ToOutput(ctx context.Context) pulumix.Output[TreeSize] {
-	return pulumix.Output[TreeSize]{
-		OutputState: o.OutputState,
-	}
-}
-
 func (o TreeSizeOutput) ToStringOutput() pulumi.StringOutput {
 	return o.ToStringOutputWithContext(context.Background())
 }
@@ -728,12 +678,6 @@ func (o TreeSizePtrOutput) ToTreeSizePtrOutputWithContext(ctx context.Context) T
 	return o
 }
 
-func (o TreeSizePtrOutput) ToOutput(ctx context.Context) pulumix.Output[*TreeSize] {
-	return pulumix.Output[*TreeSize]{
-		OutputState: o.OutputState,
-	}
-}
-
 func (o TreeSizePtrOutput) Elem() TreeSizeOutput {
 	return o.ApplyT(func(v *TreeSize) TreeSize {
 		if v != nil {
@@ -758,10 +702,12 @@ func (o TreeSizePtrOutput) ToStringPtrOutputWithContext(ctx context.Context) pul
 	}).(pulumi.StringPtrOutput)
 }
 
-// TreeSizeInput is an input type that accepts TreeSizeArgs and TreeSizeOutput values.
-// You can construct a concrete instance of `TreeSizeInput` via:
+// TreeSizeInput is an input type that accepts values of the TreeSize enum
+// A concrete instance of `TreeSizeInput` can be one of the following:
 //
-//	TreeSizeArgs{...}
+//	TreeSizeSmall
+//	TreeSizeMedium
+//	TreeSizeLarge
 type TreeSizeInput interface {
 	pulumi.Input
 
@@ -827,12 +773,6 @@ func (i TreeSizeMap) ToTreeSizeMapOutputWithContext(ctx context.Context) TreeSiz
 	return pulumi.ToOutputWithContext(ctx, i).(TreeSizeMapOutput)
 }
 
-func (i TreeSizeMap) ToOutput(ctx context.Context) pulumix.Output[map[string]TreeSize] {
-	return pulumix.Output[map[string]TreeSize]{
-		OutputState: i.ToTreeSizeMapOutputWithContext(ctx).OutputState,
-	}
-}
-
 type TreeSizeMapOutput struct{ *pulumi.OutputState }
 
 func (TreeSizeMapOutput) ElementType() reflect.Type {
@@ -845,12 +785,6 @@ func (o TreeSizeMapOutput) ToTreeSizeMapOutput() TreeSizeMapOutput {
 
 func (o TreeSizeMapOutput) ToTreeSizeMapOutputWithContext(ctx context.Context) TreeSizeMapOutput {
 	return o
-}
-
-func (o TreeSizeMapOutput) ToOutput(ctx context.Context) pulumix.Output[map[string]TreeSize] {
-	return pulumix.Output[map[string]TreeSize]{
-		OutputState: o.OutputState,
-	}
 }
 
 func (o TreeSizeMapOutput) MapIndex(k pulumi.StringInput) TreeSizeOutput {

@@ -110,6 +110,10 @@ var PulumiPulumiProgramTests = []ProgramTest{
 		Description: "AWS IAM Policy",
 	},
 	{
+		Directory:   "read-file-func",
+		Description: "ReadFile function translation works",
+	},
+	{
 		Directory:   "python-regress-10914",
 		Description: "Python regression test for #10914",
 		Skip:        allProgLanguages.Except("python"),
@@ -139,7 +143,6 @@ var PulumiPulumiProgramTests = []ProgramTest{
 		Description: "Azure Native",
 		SkipCompile: codegen.NewStringSet("go", "nodejs", "dotnet"),
 		// Blocked on go:
-		//   TODO[pulumi/pulumi#8072]
 		//   TODO[pulumi/pulumi#8073]
 		//   TODO[pulumi/pulumi#8074]
 		// Blocked on nodejs:
@@ -148,6 +151,8 @@ var PulumiPulumiProgramTests = []ProgramTest{
 	{
 		Directory:   "azure-sa",
 		Description: "Azure SA",
+		// TODO[pulumi/pulumi#14873]: Temporarily skip until we've addressed the appdash-data dependency issue.
+		SkipCompile: codegen.NewStringSet("go"),
 	},
 	{
 		Directory:   "kubernetes-operator",
@@ -270,6 +275,8 @@ var PulumiPulumiProgramTests = []ProgramTest{
 		Directory:   "regress-11176",
 		Description: "Regression test for https://github.com/pulumi/pulumi/issues/11176",
 		Skip:        allProgLanguages.Except("go"),
+		// TODO[pulumi/pulumi#14873]: Temporarily skip until we've addressed the appdash-data dependency issue.
+		SkipCompile: codegen.NewStringSet("go"),
 	},
 	{
 		Directory:   "throw-not-implemented",
@@ -378,6 +385,16 @@ var PulumiPulumiProgramTests = []ProgramTest{
 	{
 		Directory:   "empty-list-property",
 		Description: "Tests compiling empty list expressions of object properties",
+	},
+	{
+		Directory:   "python-regress-14037",
+		Description: "Regression test for rewriting qoutes in python",
+		Skip:        allProgLanguages.Except("python"),
+	},
+	{
+		Directory:   "inline-invokes",
+		Description: "Tests whether using inline invoke expressions works",
+		SkipCompile: codegen.NewStringSet("go"),
 	},
 }
 

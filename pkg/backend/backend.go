@@ -1,4 +1,4 @@
-// Copyright 2016-2018, Pulumi Corporation.
+// Copyright 2016-2023, Pulumi Corporation.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pulumi/esc"
 	"github.com/pulumi/pulumi/pkg/v3/backend/display"
 	sdkDisplay "github.com/pulumi/pulumi/pkg/v3/display"
 	"github.com/pulumi/pulumi/pkg/v3/engine"
@@ -72,7 +73,7 @@ type StackReference interface {
 	// Name is the name that will be passed to the Pulumi engine when preforming operations on this stack. This
 	// name may not uniquely identify the stack (e.g. the cloud backend embeds owner information in the StackReference
 	// but that information is not part of the StackName() we pass to the engine.
-	Name() tokens.Name
+	Name() tokens.StackName
 
 	// Project is the project name that this stack belongs to.
 	// For old filestate backends this will return false.
@@ -147,6 +148,9 @@ type Backend interface {
 	// SupportsOrganizations tells whether a user can belong to multiple organizations in this backend.
 	SupportsOrganizations() bool
 
+	// SupportsProgress tells whether the backend supports showing whether an operation is currently in progress
+	SupportsProgress() bool
+
 	// ParseStackReference takes a string representation and parses it to a reference which may be used for other
 	// methods in this backend.
 	ParseStackReference(s string) (StackReference, error)
@@ -175,7 +179,9 @@ type Backend interface {
 	RenameStack(ctx context.Context, stack Stack, newName tokens.QName) (StackReference, error)
 
 	// Preview shows what would be updated given the current workspace's contents.
-	Preview(ctx context.Context, stack Stack, op UpdateOperation) (*deploy.Plan, sdkDisplay.ResourceChanges, result.Result)
+	Preview(
+		ctx context.Context, stack Stack, op UpdateOperation, events chan<- engine.Event,
+	) (*deploy.Plan, sdkDisplay.ResourceChanges, result.Result)
 	// Update updates the target stack with the current workspace's contents (config and code).
 	Update(ctx context.Context, stack Stack, op UpdateOperation) (sdkDisplay.ResourceChanges, result.Result)
 	// Import imports resources into a stack.
@@ -212,6 +218,30 @@ type Backend interface {
 
 	// Cancel the current update for the given stack.
 	CancelCurrentUpdate(ctx context.Context, stackRef StackReference) error
+}
+
+// EnvironmentsBackend is an interface that defines an optional capability for a backend to work with environments.
+type EnvironmentsBackend interface {
+	CreateEnvironment(
+		ctx context.Context,
+		org string,
+		name string,
+		yaml []byte,
+	) (apitype.EnvironmentDiagnostics, error)
+
+	CheckYAMLEnvironment(
+		ctx context.Context,
+		org string,
+		yaml []byte,
+	) (*esc.Environment, apitype.EnvironmentDiagnostics, error)
+
+	// OpenYAMLEnvironment opens a literal environment.
+	OpenYAMLEnvironment(
+		ctx context.Context,
+		org string,
+		yaml []byte,
+		duration time.Duration,
+	) (*esc.Environment, apitype.EnvironmentDiagnostics, error)
 }
 
 // SpecificDeploymentExporter is an interface defining an additional capability of a Backend, specifically the
@@ -251,8 +281,9 @@ type QueryOperation struct {
 
 // StackConfiguration holds the configuration for a stack and it's associated decrypter.
 type StackConfiguration struct {
-	Config    config.Map
-	Decrypter config.Decrypter
+	Environment esc.Value
+	Config      config.Map
+	Decrypter   config.Decrypter
 }
 
 // UpdateOptions is the full set of update options, including backend and engine options.

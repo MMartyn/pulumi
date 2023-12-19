@@ -85,12 +85,6 @@ func (o CloudAuditOptionsLogNameOutput) ToCloudAuditOptionsLogNamePtrOutputWithC
 	}).(CloudAuditOptionsLogNamePtrOutput)
 }
 
-func (o CloudAuditOptionsLogNameOutput) ToOutput(ctx context.Context) pulumix.Output[CloudAuditOptionsLogName] {
-	return pulumix.Output[CloudAuditOptionsLogName]{
-		OutputState: o.OutputState,
-	}
-}
-
 func (o CloudAuditOptionsLogNameOutput) ToStringOutput() pulumi.StringOutput {
 	return o.ToStringOutputWithContext(context.Background())
 }
@@ -126,12 +120,6 @@ func (o CloudAuditOptionsLogNamePtrOutput) ToCloudAuditOptionsLogNamePtrOutputWi
 	return o
 }
 
-func (o CloudAuditOptionsLogNamePtrOutput) ToOutput(ctx context.Context) pulumix.Output[*CloudAuditOptionsLogName] {
-	return pulumix.Output[*CloudAuditOptionsLogName]{
-		OutputState: o.OutputState,
-	}
-}
-
 func (o CloudAuditOptionsLogNamePtrOutput) Elem() CloudAuditOptionsLogNameOutput {
 	return o.ApplyT(func(v *CloudAuditOptionsLogName) CloudAuditOptionsLogName {
 		if v != nil {
@@ -156,10 +144,13 @@ func (o CloudAuditOptionsLogNamePtrOutput) ToStringPtrOutputWithContext(ctx cont
 	}).(pulumi.StringPtrOutput)
 }
 
-// CloudAuditOptionsLogNameInput is an input type that accepts CloudAuditOptionsLogNameArgs and CloudAuditOptionsLogNameOutput values.
-// You can construct a concrete instance of `CloudAuditOptionsLogNameInput` via:
+// CloudAuditOptionsLogNameInput is an input type that accepts values of the CloudAuditOptionsLogName enum
+// A concrete instance of `CloudAuditOptionsLogNameInput` can be one of the following:
 //
-//	CloudAuditOptionsLogNameArgs{...}
+//	CloudAuditOptionsLogNameUnspecifiedLogName
+//	CloudAuditOptionsLogNameAdminActivity
+//	CloudAuditOptionsLogNameDataAccess
+//	CloudAuditOptionsLogNameSynthetic
 type CloudAuditOptionsLogNameInput interface {
 	pulumi.Input
 
@@ -267,12 +258,6 @@ func (o ContainerBrightnessOutput) ToContainerBrightnessPtrOutputWithContext(ctx
 	}).(ContainerBrightnessPtrOutput)
 }
 
-func (o ContainerBrightnessOutput) ToOutput(ctx context.Context) pulumix.Output[ContainerBrightness] {
-	return pulumix.Output[ContainerBrightness]{
-		OutputState: o.OutputState,
-	}
-}
-
 func (o ContainerBrightnessOutput) ToFloat64Output() pulumi.Float64Output {
 	return o.ToFloat64OutputWithContext(context.Background())
 }
@@ -308,12 +293,6 @@ func (o ContainerBrightnessPtrOutput) ToContainerBrightnessPtrOutputWithContext(
 	return o
 }
 
-func (o ContainerBrightnessPtrOutput) ToOutput(ctx context.Context) pulumix.Output[*ContainerBrightness] {
-	return pulumix.Output[*ContainerBrightness]{
-		OutputState: o.OutputState,
-	}
-}
-
 func (o ContainerBrightnessPtrOutput) Elem() ContainerBrightnessOutput {
 	return o.ApplyT(func(v *ContainerBrightness) ContainerBrightness {
 		if v != nil {
@@ -338,10 +317,11 @@ func (o ContainerBrightnessPtrOutput) ToFloat64PtrOutputWithContext(ctx context.
 	}).(pulumi.Float64PtrOutput)
 }
 
-// ContainerBrightnessInput is an input type that accepts ContainerBrightnessArgs and ContainerBrightnessOutput values.
-// You can construct a concrete instance of `ContainerBrightnessInput` via:
+// ContainerBrightnessInput is an input type that accepts values of the ContainerBrightness enum
+// A concrete instance of `ContainerBrightnessInput` can be one of the following:
 //
-//	ContainerBrightnessArgs{...}
+//	ContainerBrightnessZeroPointOne
+//	ContainerBrightnessOne
 type ContainerBrightnessInput interface {
 	pulumi.Input
 
@@ -451,12 +431,6 @@ func (o ContainerColorOutput) ToContainerColorPtrOutputWithContext(ctx context.C
 	}).(ContainerColorPtrOutput)
 }
 
-func (o ContainerColorOutput) ToOutput(ctx context.Context) pulumix.Output[ContainerColor] {
-	return pulumix.Output[ContainerColor]{
-		OutputState: o.OutputState,
-	}
-}
-
 func (o ContainerColorOutput) ToStringOutput() pulumi.StringOutput {
 	return o.ToStringOutputWithContext(context.Background())
 }
@@ -492,12 +466,6 @@ func (o ContainerColorPtrOutput) ToContainerColorPtrOutputWithContext(ctx contex
 	return o
 }
 
-func (o ContainerColorPtrOutput) ToOutput(ctx context.Context) pulumix.Output[*ContainerColor] {
-	return pulumix.Output[*ContainerColor]{
-		OutputState: o.OutputState,
-	}
-}
-
 func (o ContainerColorPtrOutput) Elem() ContainerColorOutput {
 	return o.ApplyT(func(v *ContainerColor) ContainerColor {
 		if v != nil {
@@ -522,10 +490,12 @@ func (o ContainerColorPtrOutput) ToStringPtrOutputWithContext(ctx context.Contex
 	}).(pulumi.StringPtrOutput)
 }
 
-// ContainerColorInput is an input type that accepts ContainerColorArgs and ContainerColorOutput values.
-// You can construct a concrete instance of `ContainerColorInput` via:
+// ContainerColorInput is an input type that accepts values of the ContainerColor enum
+// A concrete instance of `ContainerColorInput` can be one of the following:
 //
-//	ContainerColorArgs{...}
+//	ContainerColorRed
+//	ContainerColorBlue
+//	ContainerColorYellow
 type ContainerColorInput interface {
 	pulumi.Input
 
@@ -636,12 +606,6 @@ func (o ContainerSizeOutput) ToContainerSizePtrOutputWithContext(ctx context.Con
 	}).(ContainerSizePtrOutput)
 }
 
-func (o ContainerSizeOutput) ToOutput(ctx context.Context) pulumix.Output[ContainerSize] {
-	return pulumix.Output[ContainerSize]{
-		OutputState: o.OutputState,
-	}
-}
-
 func (o ContainerSizeOutput) ToIntOutput() pulumi.IntOutput {
 	return o.ToIntOutputWithContext(context.Background())
 }
@@ -677,12 +641,6 @@ func (o ContainerSizePtrOutput) ToContainerSizePtrOutputWithContext(ctx context.
 	return o
 }
 
-func (o ContainerSizePtrOutput) ToOutput(ctx context.Context) pulumix.Output[*ContainerSize] {
-	return pulumix.Output[*ContainerSize]{
-		OutputState: o.OutputState,
-	}
-}
-
 func (o ContainerSizePtrOutput) Elem() ContainerSizeOutput {
 	return o.ApplyT(func(v *ContainerSize) ContainerSize {
 		if v != nil {
@@ -707,10 +665,11 @@ func (o ContainerSizePtrOutput) ToIntPtrOutputWithContext(ctx context.Context) p
 	}).(pulumi.IntPtrOutput)
 }
 
-// ContainerSizeInput is an input type that accepts ContainerSizeArgs and ContainerSizeOutput values.
-// You can construct a concrete instance of `ContainerSizeInput` via:
+// ContainerSizeInput is an input type that accepts values of the ContainerSize enum
+// A concrete instance of `ContainerSizeInput` can be one of the following:
 //
-//	ContainerSizeArgs{...}
+//	ContainerSizeFourInch
+//	ContainerSizeSixInch
 type ContainerSizeInput interface {
 	pulumi.Input
 
