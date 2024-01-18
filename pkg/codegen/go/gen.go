@@ -264,12 +264,8 @@ func (pkg *pkgContext) tokenToEnum(tok string) string {
 
 	components := strings.Split(tok, ":")
 	contract.Assertf(len(components) == 3, "Token must have 3 components, got %d", len(components))
-	if pkg == nil {
-		panic(fmt.Errorf("pkg is nil. token %s", tok))
-	}
-	if pkg.pkg == nil {
-		panic(fmt.Errorf("pkg.pkg is nil. token %s", tok))
-	}
+	contract.Assertf(pkg != nil, "pkg is nil. token %s", tok)
+	contract.Assertf(pkg.pkg != nil, "pkg.pkg is nil. token %s", tok)
 
 	mod, name := pkg.tokenToPackage(tok), components[2]
 
@@ -790,19 +786,13 @@ func (pkg *pkgContext) resolveObjectType(t *schema.ObjectType) string {
 
 	if !isExternal {
 		name := pkg.tokenToType(t.Token)
-		objectTypeDetails := pkg.detailsForType(t)
-		if t.IsInputShape() && objectTypeDetails.input {
+		if t.IsInputShape() {
 			return name + "Args"
 		}
 		return name
 	}
-	extPkg, externalTypeDetails := pkg.contextForExternalReference(t)
-	typeName := extPkg.tokenToType(t.Token)
-	if t.IsInputShape() && externalTypeDetails.input {
-		return typeName + "Args"
-	}
-
-	return typeName
+	extPkg, _ := pkg.contextForExternalReference(t)
+	return extPkg.typeString(t)
 }
 
 func (pkg *pkgContext) contextForExternalReference(t schema.Type) (*pkgContext, typeDetails) {
@@ -1458,6 +1448,7 @@ func (pkg *pkgContext) genEnum(w io.Writer, enumType *schema.EnumType, usingGene
 		contract.Assertf(!modPkg.names.Has(e.Name), "Name collision for enum constant: %s for %s",
 			e.Name, enumType.Token)
 
+		//nolint:exhaustive // Default case handles the rest of the values
 		switch reflect.TypeOf(e.Value).Kind() {
 		case reflect.String:
 			fmt.Fprintf(w, "%s = %s(%q)\n", e.Name, name, e.Value)
@@ -1981,6 +1972,7 @@ func goPrimitiveValue(value interface{}) (string, error) {
 		v = v.Elem()
 	}
 
+	//nolint:exhaustive // Only a subset of types have a default value.
 	switch v.Kind() {
 	case reflect.Bool:
 		if v.Bool() {

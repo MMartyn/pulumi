@@ -27,9 +27,9 @@ import (
 	"time"
 
 	"github.com/blang/semver"
-	pbempty "github.com/golang/protobuf/ptypes/empty"
 	"github.com/grpc-ecosystem/grpc-opentracing/go/otgrpc"
 	opentracing "github.com/opentracing/opentracing-go"
+	"google.golang.org/protobuf/types/known/emptypb"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -577,7 +577,7 @@ func newResourceMonitor(src *evalSource, provs ProviderSource, regChan chan *reg
 			pulumirpc.RegisterResourceMonitorServer(srv, resmon)
 			return nil
 		},
-		Options: sourceEvalServeOptions(src.plugctx, tracingSpan),
+		Options: sourceEvalServeOptions(src.plugctx, tracingSpan, env.DebugGRPC.Value()),
 	})
 	if err != nil {
 		return nil, err
@@ -610,12 +610,12 @@ func (rm *resmon) Cancel() error {
 	return <-rm.done
 }
 
-func sourceEvalServeOptions(ctx *plugin.Context, tracingSpan opentracing.Span) []grpc.ServerOption {
+func sourceEvalServeOptions(ctx *plugin.Context, tracingSpan opentracing.Span, logFile string) []grpc.ServerOption {
 	serveOpts := rpcutil.OpenTracingServerInterceptorOptions(
 		tracingSpan,
 		otgrpc.SpanDecorator(decorateResourceSpans),
 	)
-	if logFile := env.DebugGRPC.Value(); logFile != "" {
+	if logFile != "" {
 		di, err := interceptors.NewDebugInterceptor(interceptors.DebugInterceptorOptions{
 			LogFile: logFile,
 			Mutex:   ctx.DebugTraceMutex,
@@ -643,7 +643,7 @@ func getProviderReference(defaultProviders *defaultProviders, req providers.Prov
 	if rawProviderRef != "" {
 		ref, err := providers.ParseReference(rawProviderRef)
 		if err != nil {
-			return providers.Reference{}, fmt.Errorf("could not parse provider reference: %v", err)
+			return providers.Reference{}, fmt.Errorf("could not parse provider reference: %w", err)
 		}
 		return ref, nil
 	}
@@ -1632,11 +1632,11 @@ func (rm *resmon) checkComponentOption(urn resource.URN, optName string, check f
 // provisioning.  These will make their way into the eventual checkpoint state file for that resource.
 func (rm *resmon) RegisterResourceOutputs(ctx context.Context,
 	req *pulumirpc.RegisterResourceOutputsRequest,
-) (*pbempty.Empty, error) {
+) (*emptypb.Empty, error) {
 	// Obtain and validate the message's inputs (a URN plus the output property map).
 	urn, err := resource.ParseURN(req.Urn)
 	if err != nil {
-		return nil, fmt.Errorf("invalid resource URN: %s", err)
+		return nil, fmt.Errorf("invalid resource URN: %w", err)
 	}
 
 	label := fmt.Sprintf("ResourceMonitor.RegisterResourceOutputs(%s)", urn)
@@ -1677,7 +1677,7 @@ func (rm *resmon) RegisterResourceOutputs(ctx context.Context,
 
 	logging.V(5).Infof(
 		"ResourceMonitor.RegisterResourceOutputs operation finished: urn=%v, #outs=%v", urn, len(outs))
-	return &pbempty.Empty{}, nil
+	return &emptypb.Empty{}, nil
 }
 
 type registerResourceEvent struct {

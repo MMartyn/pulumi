@@ -109,9 +109,9 @@ import (
 	"strings"
 	"sync"
 
-	pbempty "github.com/golang/protobuf/ptypes/empty"
 	"github.com/nxadm/tail"
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/types/known/emptypb"
 
 	"github.com/pulumi/pulumi/sdk/v3/go/auto/debug"
 	"github.com/pulumi/pulumi/sdk/v3/go/auto/events"
@@ -682,6 +682,11 @@ func (s *Stack) AddEnvironments(ctx context.Context, envs ...string) error {
 	return s.Workspace().AddEnvironments(ctx, s.Name(), envs...)
 }
 
+// ListEnvironments returns the list of environments from the stack's configuration.
+func (s *Stack) ListEnvironments(ctx context.Context) ([]string, error) {
+	return s.Workspace().ListEnvironments(ctx, s.Name())
+}
+
 // RemoveEnvironment removes an environment from a stack's configuration.
 func (s *Stack) RemoveEnvironment(ctx context.Context, env string) error {
 	return s.Workspace().RemoveEnvironment(ctx, s.Name(), env)
@@ -1231,7 +1236,7 @@ func (s *languageRuntimeServer) Run(ctx context.Context, req *pulumirpc.RunReque
 	return &pulumirpc.RunResponse{}, nil
 }
 
-func (s *languageRuntimeServer) GetPluginInfo(ctx context.Context, req *pbempty.Empty) (*pulumirpc.PluginInfo, error) {
+func (s *languageRuntimeServer) GetPluginInfo(ctx context.Context, req *emptypb.Empty) (*pulumirpc.PluginInfo, error) {
 	return &pulumirpc.PluginInfo{
 		Version: "1.0.0",
 	}, nil

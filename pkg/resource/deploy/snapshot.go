@@ -126,6 +126,12 @@ func (snap *Snapshot) NormalizeURNReferences() (*Snapshot, error) {
 //  4. Dependents must precede their dependencies in the resource list
 //  5. For every URN in the snapshot, there must be at most one resource with that URN that is not pending deletion
 //  6. The magic manifest number should change every time the snapshot is mutated
+//
+// N.B. Constraints 2 does NOT apply for resources that are pending deletion. This is because they may have
+// had their provider replaced but not yet be replaced themselves yet (due to a partial update). Pending
+// replacement resources also can't just be wholly removed from the snapshot because they may have dependents
+// that are not being replaced and thus would fail validation if the pending replacement resource was removed
+// and not re-created (again due to partial updates).
 func (snap *Snapshot) VerifyIntegrity() error {
 	if snap != nil {
 		// Ensure the magic cookie checks out.
@@ -143,16 +149,16 @@ func (snap *Snapshot) VerifyIntegrity() error {
 			if providers.IsProviderType(state.Type) {
 				ref, err := providers.NewReference(urn, state.ID)
 				if err != nil {
-					return fmt.Errorf("provider %s is not referenceable: %v", urn, err)
+					return fmt.Errorf("provider %s is not referenceable: %w", urn, err)
 				}
 				provs[ref] = struct{}{}
 			}
 			if provider := state.Provider; provider != "" {
 				ref, err := providers.ParseReference(provider)
 				if err != nil {
-					return fmt.Errorf("failed to parse provider reference for resource %s: %v", urn, err)
+					return fmt.Errorf("failed to parse provider reference for resource %s: %w", urn, err)
 				}
-				if _, has := provs[ref]; !has {
+				if _, has := provs[ref]; !has && !state.PendingReplacement {
 					return fmt.Errorf("resource %s refers to unknown provider %s", urn, ref)
 				}
 			}

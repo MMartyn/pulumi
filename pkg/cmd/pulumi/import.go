@@ -161,7 +161,7 @@ type importSpec struct {
 
 type importFile struct {
 	NameTable map[string]resource.URN `json:"nameTable,omitempty"`
-	Resources []importSpec            `json:"resources"`
+	Resources []importSpec            `json:"resources,omitempty"`
 }
 
 func readImportFile(p string) (importFile, error) {
@@ -1023,7 +1023,7 @@ func newImportCmd() *cobra.Command {
 		"Display operation as a rich diff showing the overall change")
 	cmd.PersistentFlags().IntVarP(
 		&parallel, "parallel", "p", defaultParallel,
-		"Allow P resource operations to run in parallel at once (1 for no parallelism). Defaults to unbounded.")
+		"Allow P resource operations to run in parallel at once (1 for no parallelism).")
 	cmd.PersistentFlags().BoolVar(
 		&skipPreview, "skip-preview", false,
 		"Do not calculate a preview before performing the import")

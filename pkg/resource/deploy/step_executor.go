@@ -220,7 +220,7 @@ func (se *stepExecutor) ExecuteRegisterResourceOutputs(e RegisterResourceOutputs
 	// If there is an event subscription for finishing the resource, execute them.
 	if e := se.opts.Events; e != nil {
 		if eventerr := e.OnResourceOutputs(reg); eventerr != nil {
-			se.log(synchronousWorkerID, "register resource outputs failed: %s", eventerr.Error())
+			se.log(synchronousWorkerID, "register resource outputs failed: %s", eventerr)
 
 			// This is a bit of a kludge, but ExecuteRegisterResourceOutputs is an odd duck
 			// in that it doesn't execute on worker goroutines. Arguably, it should, but today it's
@@ -354,8 +354,11 @@ func (se *stepExecutor) executeStep(workerID int, step Step) error {
 	}
 
 	// Ensure that any secrets properties in the output are marked as such and that the resource is tracked in the set
-	// of registered resources.
-	if step.New() != nil {
+	// of registered resources. We skip this for replace steps because while they _do_ have a "new" side to them that
+	// state may have already been added to the snapshot manager (in the case of create before delete replacements
+	// because the Create step is run before the Replace step) and mutating the state again causes dataraces (see
+	// https://github.com/pulumi/pulumi/issues/14994).
+	if step.New() != nil && step.Op() != OpReplace {
 		newState := step.New()
 		for _, k := range newState.AdditionalSecretOutputs {
 			if k == "id" {
