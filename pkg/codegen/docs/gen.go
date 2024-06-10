@@ -32,6 +32,8 @@ import (
 	"strings"
 
 	"github.com/golang/glog"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 
 	"github.com/pgavlin/goldmark"
 
@@ -158,6 +160,8 @@ func titleLookup(shortName string) (string, bool) {
 // Property anchor tag separator, used in a property anchor tag id to separate the
 // property and language (e.g. property~lang).
 const propertyLangSeparator = "_"
+
+var caser = cases.Title(language.English)
 
 type docGenContext struct {
 	internalModMap map[string]*modContext
@@ -1850,8 +1854,12 @@ func (mod *modContext) gen(fs codegen.Fs) error {
 		if err := mod.docGenContext.templates.ExecuteTemplate(&buff, tmpl, data); err != nil {
 			return err
 		}
-		p := path.Join(modName, dirName, "_index.md")
-		fs.Add(p, buff.Bytes())
+
+		// Skip provider
+		if modName != "" {
+			p := path.Join(modName, "docs", caser.String(fmt.Sprintf("%s Component.md", dirName)))
+			fs.Add(p, buff.Bytes())
+		}
 		return nil
 	}
 
@@ -1958,8 +1966,8 @@ func (mod *modContext) gen(fs codegen.Fs) error {
 	if mod.mod == "" {
 		idxData.PackageDescription = mod.pkg.Description()
 	}
-
-	return addFileTemplated("", "index.tmpl", idxData)
+	return nil
+	// return addFileTemplated("", "index.tmpl", idxData)
 }
 
 // indexEntry represents an individual entry on an index page.

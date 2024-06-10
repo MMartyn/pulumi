@@ -1,15 +1,7 @@
 {{ define "constructor_args" }}
-<dl class="resources-properties">
-  {{- range $params := . -}}
-    <dt
-        {{ if .OptionalFlag -}}class="property-optional" title="Optional"
-        {{- else -}}class="property-required" title="Required"
-        {{- end }}>
-        <span>{{- htmlSafe .Name -}}</span>
-        <span class="property-indicator"></span>
-        <span class="property-type">{{- if eq .Type.Link "#" "" -}}{{- htmlSafe .Type.Name -}}{{- else -}}{{ template "linkify_constructor_args" .Type }}{{- end -}}</span>
-    </dt>
-    <dd>{{- .Comment -}}</dd>
-  {{- end -}}
-</dl>
+    | Name | Type | Description | Required |
+    |---------|---|---|---|
+    {{- range $params := . }}
+    | {{- $params.Name -}} | {{- if eq $params.Type.Link "#" "" -}}{{- $params.Type.Name -}}{{- else -}}{{ template "linkify_constructor_args" $params.Type }}{{- end -}} | {{- $params.Comment -}} | {{- if $params.OptionalFlag -}}No{{- else -}}Yes{{- end -}} |        
+    {{- end -}}
 {{ end }}

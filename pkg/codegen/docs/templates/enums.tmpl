@@ -1,18 +1,9 @@
 {{ define "enums" }}
 
-{{- range $lang, $enums := . }}
-
-<div>
-<pulumi-choosable type="language" values="{{ print $lang }}">
-<dl class="tabular">
-{{- range . -}}
-    <dt>{{- htmlSafe .DisplayName -}}</dt>
-    <dd>{{- htmlSafe .Value }}{{- if .Comment }}{{- markdownify .Comment -}}{{ end -}}{{- if .DeprecationMessage }}<p class="property-message">Deprecated: {{- markdownify .DeprecationMessage -}}</p>{{- end -}}</dd>
-{{- end -}}
-</dl>
-</pulumi-choosable>
-</div>
-
-{{- end }}
+    | Property | Options | Description |
+    | ------------------------ | --- | --- | 
+    {{- range . }}
+    | <span id="{{ htmlSafe .ID }}">{{- htmlSafe .DisplayName -}}</span> |{{- htmlSafe .Value }} | {{- markdownify .Comment -}}{{- if .DeprecationMessage -}}<p class="property-message">Deprecated: {{- markdownify .DeprecationMessage -}}</p>{{- end -}} |
+    {{- end -}}
 
 {{- end }}
