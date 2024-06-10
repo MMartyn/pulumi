@@ -1209,7 +1209,10 @@ func (mod *modContext) getPropertiesWithIDPrefixAndExclude(properties []*schema.
 		if isExt := isExternalType(codegen.UnwrapType(prop.Type), mod.pkg); isExt {
 			packageName := tokenToPackageName(fmt.Sprintf("%v", codegen.UnwrapType(prop.Type)))
 			extPkgLink := "https://pulumi.com/registry/packages/" + packageName
-			comment += fmt.Sprintf(" Note: This type is defined in the [%s](%s) package.", getPackageDisplayName(packageName), extPkgLink)
+			if len(comment) > 0 {
+				comment += ". "
+			}
+			comment += fmt.Sprintf("Note: This type is defined in the [%s](%s) package.", getPackageDisplayName(packageName), extPkgLink)
 		}
 
 		// Default values for Provider inputs correspond to environment variables, so add that info to the docs.
