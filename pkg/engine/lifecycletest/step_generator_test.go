@@ -24,10 +24,10 @@ func TestDuplicateURN(t *testing.T) {
 	}
 
 	programF := deploytest.NewLanguageRuntimeF(func(_ plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
-		_, _, _, err := monitor.RegisterResource("pkgA:m:typA", "resA", true)
+		_, err := monitor.RegisterResource("pkgA:m:typA", "resA", true)
 		require.NoError(t, err)
 
-		_, _, _, err = monitor.RegisterResource("pkgA:m:typA", "resA", true)
+		_, err = monitor.RegisterResource("pkgA:m:typA", "resA", true)
 		assert.Error(t, err)
 
 		// Reads use the same URN namespace as register so make sure this also errors
@@ -39,7 +39,7 @@ func TestDuplicateURN(t *testing.T) {
 	hostF := deploytest.NewPluginHostF(nil, nil, programF, loaders...)
 
 	p := &TestPlan{
-		Options: TestUpdateOptions{HostF: hostF},
+		Options: TestUpdateOptions{T: t, HostF: hostF},
 	}
 
 	project := p.GetProject()
@@ -58,7 +58,7 @@ func TestDuplicateAlias(t *testing.T) {
 	}
 
 	program := func(monitor *deploytest.ResourceMonitor) error {
-		_, _, _, err := monitor.RegisterResource("pkgA:m:typA", "resA", true)
+		_, err := monitor.RegisterResource("pkgA:m:typA", "resA", true)
 		assert.NoError(t, err)
 		return nil
 	}
@@ -69,28 +69,28 @@ func TestDuplicateAlias(t *testing.T) {
 	hostF := deploytest.NewPluginHostF(nil, nil, runtimeF, loaders...)
 
 	p := &TestPlan{
-		Options: TestUpdateOptions{HostF: hostF},
+		Options: TestUpdateOptions{T: t, HostF: hostF},
 	}
 	resURN := p.NewURN("pkgA:m:typA", "resA", "")
 
 	project := p.GetProject()
-	snap, err := TestOp(Update).Run(project, p.GetTarget(t, nil), p.Options, false, p.BackendClient, nil)
+	snap, err := TestOp(Update).RunStep(project, p.GetTarget(t, nil), p.Options, false, p.BackendClient, nil, "0")
 	assert.NoError(t, err)
 
 	program = func(monitor *deploytest.ResourceMonitor) error {
-		_, _, _, err := monitor.RegisterResource("pkgA:m:typA", "resB", true, deploytest.ResourceOptions{
+		_, err := monitor.RegisterResource("pkgA:m:typA", "resB", true, deploytest.ResourceOptions{
 			AliasURNs: []resource.URN{resURN},
 		})
 		require.NoError(t, err)
 
-		_, _, _, err = monitor.RegisterResource("pkgA:m:typA", "resC", true, deploytest.ResourceOptions{
+		_, err = monitor.RegisterResource("pkgA:m:typA", "resC", true, deploytest.ResourceOptions{
 			AliasURNs: []resource.URN{resURN},
 		})
 		assert.Error(t, err)
 		return nil
 	}
 
-	_, err = TestOp(Update).Run(project, p.GetTarget(t, snap), p.Options, false, p.BackendClient, nil)
+	_, err = TestOp(Update).RunStep(project, p.GetTarget(t, snap), p.Options, false, p.BackendClient, nil, "1")
 	assert.Error(t, err)
 }
 
@@ -113,7 +113,7 @@ func TestSecretMasked(t *testing.T) {
 	}
 
 	programF := deploytest.NewLanguageRuntimeF(func(_ plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
-		_, _, _, err := monitor.RegisterResource("pkgA:m:typA", "resA", true, deploytest.ResourceOptions{
+		_, err := monitor.RegisterResource("pkgA:m:typA", "resA", true, deploytest.ResourceOptions{
 			Inputs: resource.PropertyMap{
 				"shouldBeSecret": resource.MakeSecret(resource.NewStringProperty("bar")),
 			},
@@ -125,7 +125,8 @@ func TestSecretMasked(t *testing.T) {
 	hostF := deploytest.NewPluginHostF(nil, nil, programF, loaders...)
 
 	p := &TestPlan{
-		Options: TestUpdateOptions{HostF: hostF},
+		// Skip display tests because secrets are serialized with the blinding crypter and can't be restored
+		Options: TestUpdateOptions{T: t, HostF: hostF, SkipDisplayTests: true},
 	}
 
 	project := p.GetProject()
@@ -151,10 +152,10 @@ func TestReadReplaceStep(t *testing.T) {
 			},
 		}).
 		RunUpdate(func(info plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
-			_, _, _, err := monitor.RegisterResource("pkgA:m:typA", "resA", true)
+			_, err := monitor.RegisterResource("pkgA:m:typA", "resA", true)
 			assert.NoError(t, err)
 			return nil
-		}).
+		}, true).
 		Then(func(snap *deploy.Snapshot, err error) {
 			assert.NoError(t, err)
 			assert.NotNil(t, snap)
@@ -176,7 +177,7 @@ func TestReadReplaceStep(t *testing.T) {
 					_, _, err := monitor.ReadResource("pkgA:m:typA", "resA", "read-id", "", nil, "", "", "")
 					assert.NoError(t, err)
 					return nil
-				}).
+				}, false).
 				Then(func(snap *deploy.Snapshot, err error) {
 					assert.NoError(t, err)
 
@@ -203,10 +204,10 @@ func TestRelinquishStep(t *testing.T) {
 			},
 		}).
 		RunUpdate(func(info plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
-			_, _, _, err := monitor.RegisterResource("pkgA:m:typA", "resA", true)
+			_, err := monitor.RegisterResource("pkgA:m:typA", "resA", true)
 			assert.NoError(t, err)
 			return nil
-		}).
+		}, true).
 		Then(func(snap *deploy.Snapshot, err error) {
 			assert.NotNil(t, snap)
 			assert.Nil(t, snap.VerifyIntegrity())
@@ -228,7 +229,7 @@ func TestRelinquishStep(t *testing.T) {
 					_, _, err := monitor.ReadResource("pkgA:m:typA", "resA", resourceID, "", nil, "", "", "")
 					assert.NoError(t, err)
 					return nil
-				}).
+				}, true).
 				Then(func(snap *deploy.Snapshot, err error) {
 					assert.NoError(t, err)
 
@@ -258,7 +259,7 @@ func TestTakeOwnershipStep(t *testing.T) {
 			_, _, err := monitor.ReadResource("pkgA:m:typA", "resA", "my-resource-id", "", nil, "", "", "")
 			assert.NoError(t, err)
 			return nil
-		}).
+		}, false).
 		Then(func(snap *deploy.Snapshot, err error) {
 			assert.NoError(t, err)
 
@@ -279,10 +280,10 @@ func TestTakeOwnershipStep(t *testing.T) {
 					},
 				}).
 				RunUpdate(func(info plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
-					_, _, _, err := monitor.RegisterResource("pkgA:m:typA", "resA", true)
+					_, err := monitor.RegisterResource("pkgA:m:typA", "resA", true)
 					assert.NoError(t, err)
 					return nil
-				}).
+				}, true).
 				Then(func(snap *deploy.Snapshot, err error) {
 					assert.NoError(t, err)
 
@@ -328,10 +329,10 @@ func TestInitErrorsStep(t *testing.T) {
 			},
 		}).
 		RunUpdate(func(info plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
-			_, _, _, err := monitor.RegisterResource("pkgA:m:typA", "resA", true)
+			_, err := monitor.RegisterResource("pkgA:m:typA", "resA", true)
 			assert.NoError(t, err)
 			return nil
-		}).
+		}, false).
 		Then(func(snap *deploy.Snapshot, err error) {
 			assert.NoError(t, err)
 
@@ -360,7 +361,7 @@ func TestReadNilOutputs(t *testing.T) {
 			assert.ErrorContains(t, err, "resource 'my-resource-id' does not exist")
 
 			return nil
-		}).
+		}, true).
 		Then(func(snap *deploy.Snapshot, err error) {
 			assert.ErrorContains(t, err,
 				"BAIL: step executor errored: step application failed: resource 'my-resource-id' does not exist")

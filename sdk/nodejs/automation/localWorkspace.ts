@@ -18,7 +18,7 @@ import * as os from "os";
 import * as semver from "semver";
 import * as upath from "upath";
 
-import { CommandResult, runPulumiCmd } from "./cmd";
+import { CommandResult, PulumiCommand } from "./cmd";
 import { ConfigMap, ConfigValue } from "./config";
 import { minimumVersion } from "./minimumVersion";
 import { ProjectSettings } from "./projectSettings";
@@ -58,6 +58,16 @@ export class LocalWorkspace implements Workspace {
      * See: https://www.pulumi.com/docs/intro/concepts/secrets/#available-encryption-providers
      */
     readonly secretsProvider?: string;
+    private _pulumiCommand?: PulumiCommand;
+    /**
+     * The underlying Pulumi CLI.
+     */
+    public get pulumiCommand(): PulumiCommand {
+        if (this._pulumiCommand === undefined) {
+            throw new Error("Failed to get Pulumi CLI");
+        }
+        return this._pulumiCommand;
+    }
     /**
      *  The inline program `PulumiFn` to be used for Preview/Update operations if any.
      *  If none is specified, the stack will refer to ProjectSettings for this information.
@@ -105,6 +115,11 @@ export class LocalWorkspace implements Workspace {
      * Whether to skip the default dependency installation step.
      */
     private remoteSkipInstallDependencies?: boolean;
+
+    /**
+     * Whether to inherit the deployment settings set on the stack.
+     */
+    private remoteInheritSettings?: boolean;
 
     /**
      * Creates a workspace using the specified options. Used for maximal control and customization
@@ -266,6 +281,7 @@ export class LocalWorkspace implements Workspace {
                 remotePreRunCommands,
                 remoteEnvVars,
                 remoteSkipInstallDependencies,
+                remoteInheritSettings,
             } = opts;
             if (workDir) {
                 // Verify that the workdir exists.
@@ -282,6 +298,7 @@ export class LocalWorkspace implements Workspace {
             this.remotePreRunCommands = remotePreRunCommands;
             this.remoteEnvVars = { ...remoteEnvVars };
             this.remoteSkipInstallDependencies = remoteSkipInstallDependencies;
+            this.remoteInheritSettings = remoteInheritSettings;
             envs = { ...envVars };
         }
 
@@ -291,7 +308,20 @@ export class LocalWorkspace implements Workspace {
         this.workDir = dir;
         this.envVars = envs;
 
-        const readinessPromises: Promise<any>[] = [this.getPulumiVersion(minimumVersion)];
+        const skipVersionCheck = !!this.envVars[SKIP_VERSION_CHECK_VAR] || !!process.env[SKIP_VERSION_CHECK_VAR];
+        const pulumiCommand = opts?.pulumiCommand
+            ? Promise.resolve(opts.pulumiCommand)
+            : PulumiCommand.get({ skipVersionCheck });
+
+        const readinessPromises: Promise<any>[] = [
+            pulumiCommand.then((p) => {
+                this._pulumiCommand = p;
+                if (p.version) {
+                    this._pulumiVersion = p.version;
+                }
+                return this.checkRemoteSupport();
+            }),
+        ];
 
         if (opts?.projectSettings) {
             readinessPromises.push(this.saveProjectSettings(opts.projectSettings));
@@ -684,11 +714,19 @@ export class LocalWorkspace implements Workspace {
         return undefined;
     }
     /**
-     * Returns all Stacks created under the current Project.
+     * Returns all Stacks from the underlying backend based on the provided options.
      * This queries underlying backend and may return stacks not present in the Workspace (as Pulumi.<stack>.yaml files).
+     *
+     * @param opts Options to customize the behavior of the list.
      */
-    async listStacks(): Promise<StackSummary[]> {
-        const result = await this.runPulumiCmd(["stack", "ls", "--json"]);
+    async listStacks(opts?: ListOptions): Promise<StackSummary[]> {
+        const args = ["stack", "ls", "--json"];
+        if (opts) {
+            if (opts.all) {
+                args.push("--all");
+            }
+        }
+        const result = await this.runPulumiCmd(args);
         return JSON.parse(result.stdout);
     }
     /**
@@ -706,7 +744,6 @@ export class LocalWorkspace implements Workspace {
      *
      * @param name the name of the plugin.
      * @param version the version of the plugin e.g. "v1.0.0".
-     * @param kind the kind of plugin, defaults to "resource"
      * @param server the server to install the plugin from
      */
     async installPluginFromServer(name: string, version: string, server: string): Promise<void> {
@@ -814,14 +851,8 @@ export class LocalWorkspace implements Workspace {
         // LocalWorkspace does not utilize this extensibility point.
         return;
     }
-    private async getPulumiVersion(minVersion: semver.SemVer) {
-        const result = await this.runPulumiCmd(["version"]);
+    private async checkRemoteSupport() {
         const optOut = !!this.envVars[SKIP_VERSION_CHECK_VAR] || !!process.env[SKIP_VERSION_CHECK_VAR];
-        const version = parseAndValidatePulumiVersion(minVersion, result.stdout.trim(), optOut);
-        if (version != null) {
-            this._pulumiVersion = version;
-        }
-
         // If remote was specified, ensure the CLI supports it.
         if (!optOut && this.isRemote) {
             // See if `--remote` is present in `pulumi preview --help`'s output.
@@ -841,7 +872,7 @@ export class LocalWorkspace implements Workspace {
             envs["PULUMI_EXPERIMENTAL"] = "true";
         }
         envs = { ...envs, ...this.envVars };
-        return runPulumiCmd(args, this.workDir, envs);
+        return this.pulumiCommand.run(args, this.workDir, envs);
     }
     /** @internal */
     get isRemote(): boolean {
@@ -908,6 +939,10 @@ export class LocalWorkspace implements Workspace {
             args.push("--remote-skip-install-dependencies");
         }
 
+        if (this.remoteInheritSettings) {
+            args.push("--remote-inherit-settings");
+        }
+
         return args;
     }
 }
@@ -944,13 +979,17 @@ export interface LocalProgramArgs {
  */
 export interface LocalWorkspaceOptions {
     /**
-     * The directory to run Pulumi commands and read settings (Pulumi.yaml and Pulumi.<stack>.yaml)l.
+     * The directory to run Pulumi commands and read settings (Pulumi.yaml and Pulumi.<stack>.yaml).
      */
     workDir?: string;
     /**
      * The directory to override for CLI metadata
      */
     pulumiHome?: string;
+    /**
+     * The underlying Pulumi CLI.
+     */
+    pulumiCommand?: PulumiCommand;
     /**
      *  The inline program `PulumiFn` to be used for Preview/Update operations if any.
      *  If none is specified, the stack will refer to ProjectSettings for this information.
@@ -1003,6 +1042,12 @@ export interface LocalWorkspaceOptions {
      * @internal
      */
     remoteSkipInstallDependencies?: boolean;
+    /**
+     * Whether to inherit deployment settings from the stack.
+     *
+     * @internal
+     */
+    remoteInheritSettings?: boolean;
 }
 
 /**
@@ -1056,39 +1101,9 @@ function loadProjectSettings(workDir: string) {
     throw new Error(`failed to find project settings file in workdir: ${workDir}`);
 }
 
-/**
- * @internal
- * Throws an error if the Pulumi CLI version is not valid.
- *
- * @param minVersion The minimum acceptable version of the Pulumi CLI.
- * @param currentVersion The currently known version. `null` indicates that the current version is unknown.
- * @paramoptOut If the user has opted out of the version check.
- */
-export function parseAndValidatePulumiVersion(
-    minVersion: semver.SemVer,
-    currentVersion: string,
-    optOut: boolean,
-): semver.SemVer | null {
-    const version = semver.parse(currentVersion);
-    if (optOut) {
-        return version;
-    }
-    if (version == null) {
-        throw new Error(
-            `Failed to parse Pulumi CLI version. This is probably an internal error. You can override this by setting "${SKIP_VERSION_CHECK_VAR}" to "true".`,
-        );
-    }
-    if (minVersion.major < version.major) {
-        throw new Error(
-            `Major version mismatch. You are using Pulumi CLI version ${currentVersion.toString()} with Automation SDK v${
-                minVersion.major
-            }. Please update the SDK.`,
-        );
-    }
-    if (minVersion.compare(version) === 1) {
-        throw new Error(
-            `Minimum version requirement failed. The minimum CLI version requirement is ${minVersion.toString()}, your current CLI version is ${currentVersion.toString()}. Please update the Pulumi CLI.`,
-        );
-    }
-    return version;
+export interface ListOptions {
+    /**
+     * List all stacks instead of just stacks for the current project
+     */
+    all?: boolean;
 }

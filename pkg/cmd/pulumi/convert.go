@@ -35,6 +35,7 @@ import (
 	"github.com/pulumi/pulumi/pkg/v3/engine"
 	"github.com/pulumi/pulumi/pkg/v3/util"
 	"github.com/pulumi/pulumi/pkg/v3/version"
+	"github.com/pulumi/pulumi/sdk/v3/go/common/apitype"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/diag"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/encoding"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/env"
@@ -58,7 +59,7 @@ func loadConverterPlugin(
 	// Default to the known version of the plugin, this ensures we use the version of the yaml-converter
 	// that aligns with the yaml codegen we've linked to for this CLI release.
 	pluginSpec := workspace.PluginSpec{
-		Kind: workspace.ConverterPlugin,
+		Kind: apitype.ConverterPlugin,
 		Name: name,
 	}
 	if versionSet := util.SetKnownPluginVersion(&pluginSpec); versionSet {
@@ -109,7 +110,7 @@ func newConvertCmd() *cobra.Command {
 			"\n" +
 			"The source program to convert will default to the current working directory.\n" +
 			"\n" +
-			"Valid source languages: yaml, terraform, bicep, arm\n" +
+			"Valid source languages: yaml, terraform, bicep, arm, kubernetes\n" +
 			"\n" +
 			"Valid target languages: typescript, python, csharp, go, java, yaml" +
 			"\n" +
@@ -279,7 +280,8 @@ func runConvert(
 		) (hcl.Diagnostics, error) {
 			contract.Requiref(proj != nil, "proj", "must not be nil")
 
-			languagePlugin, err := pCtx.Host.LanguageRuntime(cwd, cwd, language, nil)
+			programInfo := plugin.NewProgramInfo(cwd, cwd, "entry", nil)
+			languagePlugin, err := pCtx.Host.LanguageRuntime(language, programInfo)
 			if err != nil {
 				return nil, err
 			}
@@ -326,7 +328,7 @@ func runConvert(
 
 		pluginSpec := workspace.PluginSpec{
 			Name: string(provider),
-			Kind: workspace.ResourcePlugin,
+			Kind: apitype.ResourcePlugin,
 		}
 		version, err := pkgWorkspace.InstallPlugin(pluginSpec, log)
 		if err != nil {

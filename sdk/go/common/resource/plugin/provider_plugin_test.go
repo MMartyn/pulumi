@@ -17,7 +17,9 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource"
+	"github.com/pulumi/pulumi/sdk/v3/go/common/resource/asset"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/testing/diagtest"
+	"github.com/pulumi/pulumi/sdk/v3/go/common/tokens"
 	pulumirpc "github.com/pulumi/pulumi/sdk/v3/proto/go"
 )
 
@@ -244,7 +246,7 @@ func TestNestedSecret(t *testing.T) {
 func TestRestoreElidedAssetContents(t *testing.T) {
 	t.Parallel()
 	textAsset := func(text string) resource.PropertyValue {
-		asset, err := resource.NewTextAsset(text)
+		asset, err := asset.FromText(text)
 		require.NoError(t, err)
 		return resource.NewAssetProperty(asset)
 	}
@@ -478,6 +480,7 @@ func TestProvider_ConstructOptions(t *testing.T) {
 			tt.want.Name = "name"
 			tt.want.Config = make(map[string]string)
 			tt.want.Inputs = &structpb.Struct{Fields: make(map[string]*structpb.Value)}
+			tt.want.AcceptsOutputValues = true
 
 			var got *pulumirpc.ConstructRequest
 			client := &stubClient{
@@ -506,15 +509,18 @@ func TestProvider_ConstructOptions(t *testing.T) {
 			p := NewProviderWithClient(newTestContext(t), "foo", client, false /* disablePreview */)
 
 			// Must configure before we can use Construct.
-			require.NoError(t, p.Configure(nil), "configure failed")
+			_, err := p.Configure(context.Background(), ConfigureRequest{})
+			require.NoError(t, err, "configure failed")
 
-			_, err := p.Construct(
-				ConstructInfo{Project: "project", Stack: "stack"},
-				"type",
-				"name",
-				tt.parent,
-				resource.PropertyMap{},
-				tt.give,
+			_, err = p.Construct(context.Background(),
+				ConstructRequest{
+					Info:    ConstructInfo{Project: "project", Stack: "stack"},
+					Type:    "type",
+					Name:    "name",
+					Parent:  tt.parent,
+					Inputs:  resource.PropertyMap{},
+					Options: tt.give,
+				},
 			)
 			require.NoError(t, err)
 
@@ -565,20 +571,21 @@ func TestProvider_ConfigureDeleteRace(t *testing.T) {
 		defer close(done)
 
 		close(deleting)
-		_, err := p.Delete(
+		_, err := p.Delete(context.Background(), DeleteRequest{
 			resource.NewURN("org/proj/dev", "foo", "", "bar:baz", "qux"),
 			"whatever",
 			props,
 			props,
 			1000,
-		)
+		})
 		assert.NoError(t, err, "Delete failed")
 	}()
 
 	// Wait until delete request has been sent to Configure
 	// and then wait until Delete has finished.
 	<-deleting
-	assert.NoError(t, p.Configure(props))
+	_, err := p.Configure(context.Background(), ConfigureRequest{Inputs: props})
+	assert.NoError(t, err)
 	<-done
 
 	s, ok := gotSecret.Kind.(*structpb.Value_StructValue)
@@ -675,26 +682,78 @@ func TestKubernetesDiffError(t *testing.T) {
 
 	// Test that the error from 14529 is NOT ignored if reported by something other than kubernetes
 	az := NewProviderWithClient(newTestContext(t), "azure", client, false /* disablePreview */)
-	_, err := az.DiffConfig(
+	_, err := az.DiffConfig(context.Background(), DiffConfigRequest{
 		resource.NewURN("org/proj/dev", "foo", "", "pulumi:provider:azure", "qux"),
-		resource.PropertyMap{}, resource.PropertyMap{}, resource.PropertyMap{},
-		false, nil)
+		resource.PropertyMap{},
+		resource.PropertyMap{},
+		resource.PropertyMap{},
+		false,
+		nil,
+	})
 	assert.ErrorContains(t, err, "failed to parse kubeconfig")
 
 	// Test that the error from 14529 is ignored if reported by kubernetes
 	k8s := NewProviderWithClient(newTestContext(t), "kubernetes", client, false /* disablePreview */)
-	diff, err := k8s.DiffConfig(
+	diff, err := k8s.DiffConfig(context.Background(), DiffConfigRequest{
 		resource.NewURN("org/proj/dev", "foo", "", "pulumi:provider:kubernetes", "qux"),
-		resource.PropertyMap{}, resource.PropertyMap{}, resource.PropertyMap{},
-		false, nil)
+		resource.PropertyMap{},
+		resource.PropertyMap{},
+		resource.PropertyMap{},
+		false,
+		nil,
+	})
 	assert.NoError(t, err)
 	assert.Equal(t, DiffUnknown, diff.Changes)
 
 	// Test that some other error is not ignored if reported by kubernetes
 	diffErr = status.Errorf(codes.Unknown, "some other error")
-	_, err = k8s.DiffConfig(
+	_, err = k8s.DiffConfig(context.Background(), DiffConfigRequest{
 		resource.NewURN("org/proj/dev", "foo", "", "pulumi:provider:kubernetes", "qux"),
-		resource.PropertyMap{}, resource.PropertyMap{}, resource.PropertyMap{},
-		false, nil)
+		resource.PropertyMap{},
+		resource.PropertyMap{},
+		resource.PropertyMap{},
+		false,
+		nil,
+	})
 	assert.ErrorContains(t, err, "some other error")
+}
+
+//nolint:paralleltest // using t.Setenv which is incompatible with t.Parallel
+func TestGetProviderAttachPort(t *testing.T) {
+	t.Run("no attach", func(t *testing.T) {
+		aws := tokens.Package("aws")
+		port, err := GetProviderAttachPort(aws)
+		require.NoError(t, err)
+		require.Nil(t, port)
+	})
+	t.Run("aws:12345", func(t *testing.T) {
+		t.Setenv("PULUMI_DEBUG_PROVIDERS", "aws:12345")
+		aws := tokens.Package("aws")
+		port, err := GetProviderAttachPort(aws)
+		require.NoError(t, err)
+		require.NotNil(t, port)
+		require.Equal(t, 12345, *port)
+	})
+	t.Run("gcp:999,aws:12345", func(t *testing.T) {
+		t.Setenv("PULUMI_DEBUG_PROVIDERS", "gcp:999,aws:12345")
+		aws := tokens.Package("aws")
+		port, err := GetProviderAttachPort(aws)
+		require.NoError(t, err)
+		require.NotNil(t, port)
+		require.Equal(t, 12345, *port)
+	})
+	t.Run("gcp:999", func(t *testing.T) {
+		t.Setenv("PULUMI_DEBUG_PROVIDERS", "gcp:999")
+		aws := tokens.Package("aws")
+		port, err := GetProviderAttachPort(aws)
+		require.NoError(t, err)
+		require.Nil(t, port)
+	})
+	t.Run("invalid", func(t *testing.T) {
+		t.Setenv("PULUMI_DEBUG_PROVIDERS", "aws:port")
+		aws := tokens.Package("aws")
+		port, err := GetProviderAttachPort(aws)
+		require.Error(t, err)
+		require.Nil(t, port)
+	})
 }

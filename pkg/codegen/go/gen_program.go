@@ -260,6 +260,39 @@ func (g *generator) genComponentArgs(w io.Writer, componentName string, componen
 	g.Fgenf(w, "}\n\n")
 }
 
+// genLeadingTrivia generates the list of leading trivia assicated with a given token.
+func (g *generator) genLeadingTrivia(w io.Writer, token syntax.Token) {
+	// TODO(pdg): whitespace?
+	for _, t := range token.LeadingTrivia {
+		if c, ok := t.(syntax.Comment); ok {
+			g.genComment(w, c)
+		}
+	}
+}
+
+// genTrailingTrivia generates the list of trailing trivia assicated with a given token.
+func (g *generator) genTrailingTrivia(w io.Writer, token syntax.Token) {
+	// TODO(pdg): whitespace
+	for _, t := range token.TrailingTrivia {
+		if c, ok := t.(syntax.Comment); ok {
+			g.genComment(w, c)
+		}
+	}
+}
+
+// genTrivia generates the list of trivia assicated with a given token.
+func (g *generator) genTrivia(w io.Writer, token syntax.Token) {
+	g.genLeadingTrivia(w, token)
+	g.genTrailingTrivia(w, token)
+}
+
+// genComment generates a comment into the output.
+func (g *generator) genComment(w io.Writer, comment syntax.Comment) {
+	for _, l := range comment.Lines {
+		g.Fgenf(w, "%s//%s\n", g.Indent, l)
+	}
+}
+
 func (g *generator) genComponentType(w io.Writer, componentName string, component *pcl.Component) {
 	outputs := component.Program.OutputVariables()
 	componentTypeName := Title(componentName)
@@ -650,6 +683,7 @@ func (g *generator) genPreamble(w io.Writer, program *pcl.Program, preambleHelpe
 
 func (g *generator) collectTypeImports(program *pcl.Program, t schema.Type) {
 	var token string
+	var packageRef schema.PackageReference
 	switch t := t.(type) {
 	case *schema.InputType:
 		g.collectTypeImports(program, t.ElementType)
@@ -670,20 +704,32 @@ func (g *generator) collectTypeImports(program *pcl.Program, t schema.Type) {
 		return
 	case *schema.ObjectType:
 		token = t.Token
+		packageRef = t.PackageReference
 	case *schema.EnumType:
 		token = t.Token
+		packageRef = t.PackageReference
 	case *schema.TokenType:
 		token = t.Token
+		var tokenRange hcl.Range
+		pkg, mod, name, _ := pcl.DecomposeToken(token, tokenRange)
+		vPath, err := g.getVersionPath(program, pkg)
+		if err != nil {
+			panic(err)
+		}
+		g.addPulumiImport(pkg, vPath, mod, name)
 	case *schema.ResourceType:
 		token = t.Token
+		if t.Resource != nil {
+			packageRef = t.Resource.PackageReference
+		}
 	}
-	if token == "" {
+	if token == "" || packageRef == nil {
 		return
 	}
 
 	var tokenRange hcl.Range
 	pkg, mod, name, _ := pcl.DecomposeToken(token, tokenRange)
-	vPath, err := g.getVersionPath(program, pkg)
+	vPath, err := g.packageVersionPath(packageRef)
 	if err != nil {
 		panic(err)
 	}
@@ -812,6 +858,13 @@ func (g *generator) collectConvertImports(
 	}
 }
 
+func (g *generator) packageVersionPath(packageRef schema.PackageReference) (string, error) {
+	if ver := packageRef.Version(); ver != nil && ver.Major > 1 {
+		return fmt.Sprintf("/v%d", ver.Major), nil
+	}
+	return "", nil
+}
+
 func (g *generator) getVersionPath(program *pcl.Program, pkg string) (string, error) {
 	for _, p := range program.PackageReferences() {
 		if p.Name() == pkg {
@@ -835,21 +888,27 @@ func (g *generator) getGoPackageInfo(pkg string) (GoPackageInfo, bool) {
 }
 
 func (g *generator) addPulumiImport(pkg, versionPath, mod, name string) {
+	// We do this before we let the user set overrides. That way the user can still have a
+	// module named IndexToken.
+	info, hasInfo := g.getGoPackageInfo(pkg) // We're allowing `info` to be zero-initialized
 	importPath := func(mod, importBasePath string) string {
 		if importBasePath == "" {
 			importBasePath = fmt.Sprintf("github.com/pulumi/pulumi-%s/sdk%s/go/%s", pkg, versionPath, pkg)
 		}
 
 		if mod != "" && mod != IndexToken {
+			if info.ImportPathPattern != "" {
+				importedPath := strings.ReplaceAll(info.ImportPathPattern, "{module}", mod)
+				return strings.ReplaceAll(importedPath, "{baseImportPath}", importBasePath)
+			}
+
 			return fmt.Sprintf("%s/%s", importBasePath, mod)
 		}
 		return importBasePath
 	}
 
-	// We do this before we let the user set overrides. That way the user can still have a
-	// module named IndexToken.
-	info, hasInfo := g.getGoPackageInfo(pkg) // We're allowing `info` to be zero-initialized
 	if !hasInfo {
+		mod = strings.SplitN(mod, "/", 2)[0]
 		path := importPath(mod, "")
 		// users hasn't provided any extra overrides
 		if mod == "" || mod == IndexToken {
@@ -1057,6 +1116,11 @@ func (g *generator) genResource(w io.Writer, r *pcl.Resource) {
 		g.Fgenf(w, "}\n")
 	}
 
+	g.genTrivia(w, r.Definition.Tokens.GetType(""))
+	for _, l := range r.Definition.Tokens.GetLabels(nil) {
+		g.genTrivia(w, l)
+	}
+	g.genTrivia(w, r.Definition.Tokens.GetOpenBrace())
 	if r.Options != nil && r.Options.Range != nil {
 		rangeType := model.ResolveOutputs(r.Options.Range.Type())
 		rangeExpr, temps := g.lowerExpression(r.Options.Range, rangeType)
@@ -1380,6 +1444,7 @@ func (g *generator) genLocalVariable(w io.Writer, v *pcl.LocalVariable) {
 			assignment = "="
 		}
 	}
+	g.genTrivia(w, v.Definition.Tokens.Name)
 	switch expr := expr.(type) {
 	case *model.FunctionCallExpression:
 		switch expr.Name {
@@ -1551,6 +1616,10 @@ func (g *generator) getModOrAlias(pkg, mod, originalMod string) string {
 	importPath := func(mod string) string {
 		importBasePath := info.ImportBasePath
 		if mod != "" && mod != IndexToken {
+			if info.ImportPathPattern != "" {
+				importedPath := strings.ReplaceAll(info.ImportPathPattern, "{module}", mod)
+				return strings.ReplaceAll(importedPath, "{baseImportPath}", importBasePath)
+			}
 			return fmt.Sprintf("%s/%s", importBasePath, mod)
 		}
 		return importBasePath
@@ -1646,6 +1715,7 @@ func (fi *fileImporter) Import(importPath string, name string) (actualName strin
 	contract.Requiref(importPath != "", "importPath", "must not be empty")
 	contract.Requiref(name != "", "name", "must not be empty (importPath: %q)", importPath)
 
+	name = strings.ReplaceAll(name, "-", "")
 	// For readability, always add an alias if the package name
 	// does not match the base name of the import path.
 	// For example, "example.com/foo-go" with package "foo"

@@ -75,17 +75,17 @@ func newOrgSetDefaultCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "set-default [NAME]",
 		Args:  cmdutil.ExactArgs(1),
-		Short: "Set the default organization for the current backend",
-		Long: "Set the default organization for the current backend.\n" +
+		Short: "Set the local default organization for the current backend",
+		Long: "Set the local default organization for the current backend.\n" +
 			"\n" +
-			"This command is used to set the default organization in which to create \n" +
+			"This command is used to set your local default organization in which to create \n" +
 			"projects and stacks for the current backend.\n" +
 			"\n" +
 			"Currently, only the managed and self-hosted backends support organizations. " +
 			"If you try and set a default organization for a backend that does not \n" +
 			"support create organizations, then an error will be returned by the CLI",
 		Run: cmdutil.RunFunc(func(cmd *cobra.Command, args []string) error {
-			ctx := commandContext()
+			ctx := cmd.Context()
 			displayOpts := display.Options{
 				Color: cmdutil.GetGlobalColorization(),
 			}
@@ -130,7 +130,7 @@ func newOrgGetDefaultCmd() *cobra.Command {
 			"\n" +
 			"Currently, only the managed and self-hosted backends support organizations.",
 		Run: cmdutil.RunFunc(func(cmd *cobra.Command, args []string) error {
-			ctx := commandContext()
+			ctx := cmd.Context()
 			displayOpts := display.Options{
 				Color: cmdutil.GetGlobalColorization(),
 			}

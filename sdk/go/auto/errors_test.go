@@ -17,13 +17,15 @@ package auto
 
 import (
 	"context"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
 
+	ptesting "github.com/pulumi/pulumi/sdk/v3/go/common/testing"
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
-	"github.com/pulumi/pulumi/sdk/v3/python"
+	"github.com/pulumi/pulumi/sdk/v3/python/toolchain"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -36,7 +38,7 @@ func TestConcurrentUpdateError(t *testing.T) {
 	n := 50
 	ctx := context.Background()
 	pName := "conflict_error"
-	sName := randomStackName()
+	sName := ptesting.RandomStackName()
 	stackName := FullyQualifiedStackName(pulumiOrg, pName, sName)
 
 	// initialize
@@ -103,7 +105,7 @@ func TestInlineConcurrentUpdateError(t *testing.T) {
 	t.Skip("disabled, see https://github.com/pulumi/pulumi/issues/5312")
 	ctx := context.Background()
 	pName := "inline_conflict_error"
-	sName := randomStackName()
+	sName := ptesting.RandomStackName()
 	stackName := FullyQualifiedStackName(pulumiOrg, pName, sName)
 
 	// initialize
@@ -160,7 +162,7 @@ func TestCompilationErrorGo(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	sName := randomStackName()
+	sName := ptesting.RandomStackName()
 	stackName := FullyQualifiedStackName(pulumiOrg, compilationErrProj, sName)
 
 	// initialize
@@ -193,7 +195,7 @@ func TestSelectStack404Error(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	sName := randomStackName()
+	sName := ptesting.RandomStackName()
 	stackName := FullyQualifiedStackName(pulumiOrg, "testproj", sName)
 
 	// initialize
@@ -214,7 +216,7 @@ func TestCreateStack409Error(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	sName := randomStackName()
+	sName := ptesting.RandomStackName()
 	stackName := FullyQualifiedStackName(pulumiOrg, "testproj", sName)
 
 	// initialize first stack
@@ -248,7 +250,7 @@ func TestCompilationErrorDotnet(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	sName := randomStackName()
+	sName := ptesting.RandomStackName()
 	stackName := FullyQualifiedStackName(pulumiOrg, compilationErrProj, sName)
 
 	// initialize
@@ -281,7 +283,7 @@ func TestCompilationErrorTypescript(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	sName := randomStackName()
+	sName := ptesting.RandomStackName()
 	stackName := FullyQualifiedStackName(pulumiOrg, compilationErrProj, sName)
 
 	// initialize
@@ -325,7 +327,7 @@ func TestRuntimeErrorGo(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	sName := randomStackName()
+	sName := ptesting.RandomStackName()
 	stackName := FullyQualifiedStackName(pulumiOrg, runtimeErrProj, sName)
 
 	// initialize
@@ -358,7 +360,7 @@ func TestRuntimeErrorInlineGo(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	sName := randomStackName()
+	sName := ptesting.RandomStackName()
 	stackName := FullyQualifiedStackName(pulumiOrg, runtimeErrProj, sName)
 
 	// initialize
@@ -392,7 +394,7 @@ func TestRuntimeErrorPython(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	sName := randomStackName()
+	sName := ptesting.RandomStackName()
 	stackName := FullyQualifiedStackName(pulumiOrg, runtimeErrProj, sName)
 
 	// initialize
@@ -402,7 +404,16 @@ func TestRuntimeErrorPython(t *testing.T) {
 		t.FailNow()
 	}
 
-	err = python.InstallDependencies(context.Background(), pDir, "venv", true /*showOutput*/)
+	tc, err := toolchain.ResolveToolchain(toolchain.PythonOptions{
+		Toolchain:  toolchain.Pip,
+		Root:       pDir,
+		Virtualenv: "venv",
+	})
+	if err != nil {
+		t.Error(err)
+		t.FailNow()
+	}
+	err = tc.InstallDependencies(context.Background(), pDir, true /*showOutput*/, os.Stdout, os.Stderr)
 	if err != nil {
 		t.Errorf("failed to create a venv and install project dependencies: %v", err)
 		t.FailNow()
@@ -415,7 +426,11 @@ func TestRuntimeErrorPython(t *testing.T) {
 	}
 
 	// install Pulumi Python SDK from the current source tree, -e means no-copy, ref directly
-	pyCmd := python.VirtualEnvCommand(filepath.Join(pDir, "venv"), "python", "-m", "pip", "install", "-e", pySDK)
+	pyCmd, err := tc.ModuleCommand(context.Background(), "pip", "install", "-e", pySDK)
+	if err != nil {
+		t.Errorf("failed to install the local SDK: %v", err)
+		t.FailNow()
+	}
 	pyCmd.Dir = pDir
 	err = pyCmd.Run()
 	if err != nil {
@@ -452,7 +467,7 @@ func TestRuntimeErrorJavascript(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	sName := randomStackName()
+	sName := ptesting.RandomStackName()
 	stackName := FullyQualifiedStackName(pulumiOrg, runtimeErrProj, sName)
 
 	// initialize
@@ -494,7 +509,7 @@ func TestRuntimeErrorTypescript(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	sName := randomStackName()
+	sName := ptesting.RandomStackName()
 	stackName := FullyQualifiedStackName(pulumiOrg, runtimeErrProj, sName)
 
 	// initialize
@@ -536,7 +551,7 @@ func TestRuntimeErrorDotnet(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	sName := randomStackName()
+	sName := ptesting.RandomStackName()
 	stackName := FullyQualifiedStackName(pulumiOrg, runtimeErrProj, sName)
 
 	// initialize

@@ -39,13 +39,13 @@ func TestProvider(t *testing.T) {
 					return errors.New("expected error")
 				},
 			}
-			assert.Error(t, prov.SignalCancellation())
+			assert.Error(t, prov.SignalCancellation(context.Background()))
 			assert.True(t, called)
 		})
 		t.Run("no CancelF", func(t *testing.T) {
 			t.Parallel()
 			prov := &Provider{}
-			assert.NoError(t, prov.SignalCancellation())
+			assert.NoError(t, prov.SignalCancellation(context.Background()))
 		})
 	})
 	t.Run("Close", func(t *testing.T) {
@@ -61,7 +61,7 @@ func TestProvider(t *testing.T) {
 			Name:    "expected-name",
 			Version: semver.MustParse("1.0.0"),
 		}
-		info, err := prov.GetPluginInfo()
+		info, err := prov.GetPluginInfo(context.Background())
 		assert.NoError(t, err)
 		assert.Equal(t, "expected-name", info.Name)
 		// Ensure reference is passed correctly.
@@ -72,24 +72,31 @@ func TestProvider(t *testing.T) {
 		t.Run("has GetSchemaF", func(t *testing.T) {
 			t.Parallel()
 			expectedErr := errors.New("expected error")
+			expectedVersion := semver.MustParse("1.0.0")
 			var called bool
 			prov := &Provider{
-				GetSchemaF: func(version int) ([]byte, error) {
-					assert.Equal(t, 1, version)
+				GetSchemaF: func(request plugin.GetSchemaRequest) ([]byte, error) {
+					assert.Equal(t, 1, request.Version)
+					assert.Equal(t, "expected-subpackage", request.SubpackageName)
+					assert.Equal(t, &expectedVersion, request.SubpackageVersion)
 					called = true
 					return nil, expectedErr
 				},
 			}
-			_, err := prov.GetSchema(1)
+			_, err := prov.GetSchema(context.Background(), plugin.GetSchemaRequest{
+				Version:           1,
+				SubpackageName:    "expected-subpackage",
+				SubpackageVersion: &expectedVersion,
+			})
 			assert.ErrorIs(t, err, expectedErr)
 			assert.True(t, called)
 		})
 		t.Run("no GetSchemaF", func(t *testing.T) {
 			t.Parallel()
 			prov := &Provider{}
-			b, err := prov.GetSchema(0)
+			b, err := prov.GetSchema(context.Background(), plugin.GetSchemaRequest{})
 			assert.NoError(t, err)
-			assert.Equal(t, []byte("{}"), b)
+			assert.Equal(t, []byte("{}"), b.Schema)
 		})
 	})
 	t.Run("CheckConfig", func(t *testing.T) {
@@ -109,29 +116,32 @@ func TestProvider(t *testing.T) {
 					return nil, nil, expectedErr
 				},
 			}
-			_, _, err := prov.CheckConfig(
-				resource.URN("expected-urn"),
-				resource.PropertyMap{
+			_, err := prov.CheckConfig(context.Background(), plugin.CheckConfigRequest{
+				URN: resource.URN("expected-urn"),
+				Olds: resource.PropertyMap{
 					"old": resource.NewStringProperty("old-value"),
 				},
-				resource.PropertyMap{
+				News: resource.PropertyMap{
 					"new": resource.NewStringProperty("new-value"),
 				},
-				true,
-			)
+				AllowUnknowns: true,
+			})
 			assert.ErrorIs(t, err, expectedErr)
 			assert.True(t, called)
 		})
 		t.Run("no CheckConfigF", func(t *testing.T) {
 			t.Parallel()
 			prov := &Provider{}
-			news, failures, err := prov.CheckConfig(resource.URN(""), nil /* olds */, resource.PropertyMap{
-				"expected": resource.NewStringProperty("expected-value"),
-			}, true)
+			resp, err := prov.CheckConfig(context.Background(), plugin.CheckConfigRequest{
+				News: resource.PropertyMap{
+					"expected": resource.NewStringProperty("expected-value"),
+				},
+				AllowUnknowns: true,
+			})
 			assert.NoError(t, err)
-			assert.Empty(t, failures)
+			assert.Empty(t, resp.Failures)
 			// Should return the news.
-			assert.Equal(t, resource.NewStringProperty("expected-value"), news["expected"])
+			assert.Equal(t, resource.NewStringProperty("expected-value"), resp.Properties["expected"])
 		})
 	})
 	t.Run("Construct", func(t *testing.T) {
@@ -161,15 +171,14 @@ func TestProvider(t *testing.T) {
 						return plugin.ConstructResult{}, expectedErr
 					},
 				}
-				_, err := prov.Construct(
-					plugin.ConstructInfo{
+				_, err := prov.Construct(context.Background(), plugin.ConstructRequest{
+					Type: tokens.Type("some-type"),
+					Name: "name",
+					Info: plugin.ConstructInfo{
 						MonitorAddress: "expected-endpoint",
 					},
-					tokens.Type("some-type"),
-					"name",
-					resource.URN("<parent-urn>"),
-					nil, /* inputs */
-					plugin.ConstructOptions{})
+					Parent: resource.URN("<parent-urn>"),
+				})
 				assert.ErrorIs(t, err, expectedErr)
 				assert.True(t, dialCalled)
 				assert.True(t, constructCalled)
@@ -188,13 +197,11 @@ func TestProvider(t *testing.T) {
 							return plugin.ConstructResult{}, nil
 						},
 					}
-					_, err := prov.Construct(
-						plugin.ConstructInfo{},
-						tokens.Type("some-type"),
-						"name",
-						resource.URN("<parent-urn>"),
-						nil, /* inputs */
-						plugin.ConstructOptions{})
+					_, err := prov.Construct(context.Background(), plugin.ConstructRequest{
+						Type:   tokens.Type("some-type"),
+						Name:   "name",
+						Parent: resource.URN("<parent-urn>"),
+					})
 					assert.ErrorContains(t, err, "could not connect to resource monitor")
 				})
 				t.Run("injected error", func(t *testing.T) {
@@ -217,13 +224,11 @@ func TestProvider(t *testing.T) {
 							return plugin.ConstructResult{}, nil
 						},
 					}
-					_, err := prov.Construct(
-						plugin.ConstructInfo{},
-						tokens.Type("some-type"),
-						"name",
-						resource.URN("<parent-urn>"),
-						nil, /* inputs */
-						plugin.ConstructOptions{})
+					_, err := prov.Construct(context.Background(), plugin.ConstructRequest{
+						Type:   tokens.Type("some-type"),
+						Name:   "name",
+						Parent: resource.URN("<parent-urn>"),
+					})
 					assert.ErrorIs(t, err, expectedErr)
 					assert.True(t, dialCalled)
 				})
@@ -237,13 +242,11 @@ func TestProvider(t *testing.T) {
 					return nil, nil
 				},
 			}
-			_, err := prov.Construct(
-				plugin.ConstructInfo{},
-				tokens.Type("some-type"),
-				"name",
-				resource.URN("<parent-urn>"),
-				nil, /* inputs */
-				plugin.ConstructOptions{})
+			_, err := prov.Construct(context.Background(), plugin.ConstructRequest{
+				Type:   tokens.Type("some-type"),
+				Name:   "name",
+				Parent: resource.URN("<parent-urn>"),
+			})
 			assert.NoError(t, err)
 		})
 	})
@@ -263,18 +266,20 @@ func TestProvider(t *testing.T) {
 					return expectedPropertyMap, nil, nil
 				},
 			}
-			res, _, err := prov.Invoke("expected-tok", nil)
+			resp, err := prov.Invoke(context.Background(), plugin.InvokeRequest{
+				Tok: "expected-tok",
+			})
 			assert.NoError(t, err)
 			assert.True(t, called)
-			assert.Equal(t, expectedPropertyMap, res)
+			assert.Equal(t, expectedPropertyMap, resp.Properties)
 		})
 		t.Run("no InvokeF", func(t *testing.T) {
 			t.Parallel()
 			prov := &Provider{}
-			news, failures, err := prov.Invoke("", nil)
+			resp, err := prov.Invoke(context.Background(), plugin.InvokeRequest{})
 			assert.NoError(t, err)
-			assert.Empty(t, failures)
-			assert.Equal(t, resource.PropertyMap{}, news)
+			assert.Empty(t, resp.Failures)
+			assert.Equal(t, resource.PropertyMap{}, resp.Properties)
 		})
 	})
 	t.Run("StreamInvoke", func(t *testing.T) {
@@ -291,13 +296,13 @@ func TestProvider(t *testing.T) {
 					return nil, expectedErr
 				},
 			}
-			_, err := prov.StreamInvoke("expected-tok", nil, nil)
+			_, err := prov.StreamInvoke(context.Background(), plugin.StreamInvokeRequest{Tok: "expected-tok"})
 			assert.ErrorIs(t, err, expectedErr)
 		})
 		t.Run("no StreamInvokeF", func(t *testing.T) {
 			t.Parallel()
 			prov := &Provider{}
-			_, err := prov.StreamInvoke("", nil, nil)
+			_, err := prov.StreamInvoke(context.Background(), plugin.StreamInvokeRequest{})
 			assert.ErrorContains(t, err, "StreamInvoke unimplemented")
 		})
 	})
@@ -327,7 +332,7 @@ func TestProvider(t *testing.T) {
 						return plugin.CallResult{}, expectedErr
 					},
 				}
-				_, err := prov.Call("expected-tok", nil, plugin.CallInfo{}, plugin.CallOptions{})
+				_, err := prov.Call(context.Background(), plugin.CallRequest{Tok: "expected-tok"})
 				assert.ErrorIs(t, err, expectedErr)
 				assert.True(t, dialCalled)
 				assert.True(t, callCalled)
@@ -345,7 +350,7 @@ func TestProvider(t *testing.T) {
 							return plugin.CallResult{}, nil
 						},
 					}
-					_, err := prov.Call("", nil, plugin.CallInfo{}, plugin.CallOptions{})
+					_, err := prov.Call(context.Background(), plugin.CallRequest{})
 					assert.ErrorContains(t, err, "could not connect to resource monitor")
 				})
 				t.Run("injected error", func(t *testing.T) {
@@ -367,7 +372,7 @@ func TestProvider(t *testing.T) {
 							return plugin.CallResult{}, expectedErr
 						},
 					}
-					_, err := prov.Call("", nil, plugin.CallInfo{}, plugin.CallOptions{})
+					_, err := prov.Call(context.Background(), plugin.CallRequest{})
 					assert.ErrorIs(t, err, expectedErr)
 					assert.True(t, dialCalled)
 				})
@@ -381,7 +386,7 @@ func TestProvider(t *testing.T) {
 					return nil, nil
 				},
 			}
-			_, err := prov.Call("", nil, plugin.CallInfo{}, plugin.CallOptions{})
+			_, err := prov.Call(context.Background(), plugin.CallRequest{})
 			assert.NoError(t, err)
 		})
 	})
@@ -397,16 +402,19 @@ func TestProvider(t *testing.T) {
 					return nil, "", expectedErr
 				},
 			}
-			_, _, err := prov.GetMapping("expected-key", "expected-provider")
+			_, err := prov.GetMapping(context.Background(), plugin.GetMappingRequest{
+				Key:      "expected-key",
+				Provider: "expected-provider",
+			})
 			assert.ErrorIs(t, err, expectedErr)
 		})
 		t.Run("no GetMappingF", func(t *testing.T) {
 			t.Parallel()
 			prov := &Provider{}
-			mappingB, mappingStr, err := prov.GetMapping("", "")
+			resp, err := prov.GetMapping(context.Background(), plugin.GetMappingRequest{})
 			assert.NoError(t, err)
-			assert.Equal(t, "", mappingStr)
-			assert.Nil(t, mappingB)
+			assert.Equal(t, "", resp.Provider)
+			assert.Nil(t, resp.Data)
 		})
 	})
 	t.Run("GetMappings", func(t *testing.T) {
@@ -420,13 +428,13 @@ func TestProvider(t *testing.T) {
 					return nil, expectedErr
 				},
 			}
-			_, err := prov.GetMappings("expected-key")
+			_, err := prov.GetMappings(context.Background(), plugin.GetMappingsRequest{Key: "expected-key"})
 			assert.ErrorIs(t, err, expectedErr)
 		})
 		t.Run("no GetMappingsF", func(t *testing.T) {
 			t.Parallel()
 			prov := &Provider{}
-			mappingStrs, err := prov.GetMappings("")
+			mappingStrs, err := prov.GetMappings(context.Background(), plugin.GetMappingsRequest{})
 			assert.NoError(t, err)
 			assert.Empty(t, mappingStrs)
 		})

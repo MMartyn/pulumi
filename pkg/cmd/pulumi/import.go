@@ -41,6 +41,7 @@ import (
 	"github.com/pulumi/pulumi/pkg/v3/resource/deploy/providers"
 	"github.com/pulumi/pulumi/pkg/v3/resource/stack"
 	pkgWorkspace "github.com/pulumi/pulumi/pkg/v3/workspace"
+	"github.com/pulumi/pulumi/sdk/v3/go/common/apitype"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/diag"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/env"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource"
@@ -87,7 +88,9 @@ func makeImportFileFromResourceList(resources []plugin.ResourceImport) (importFi
 			ID:                resource.ID(res.ID),
 			Version:           res.Version,
 			PluginDownloadURL: res.PluginDownloadURL,
-			// TODO(https://github.com/pulumi/pulumi/issues/14532): Add Component, Remote, and LogicalName to ResourceImport
+			Component:         res.IsComponent,
+			Remote:            res.IsRemote,
+			LogicalName:       res.LogicalName,
 		}
 	}
 
@@ -498,9 +501,9 @@ func generateImportedDefinitions(ctx *plugin.Context,
 		urn := resource.NewURN(stackName.Q(), projectName, parentType, i.Type, i.Name)
 		if state, ok := resourceTable[urn]; ok {
 			// Copy the state and override the protect bit.
-			s := *state
+			s := state.Copy()
 			s.Protect = protectResources
-			resources = append(resources, &s)
+			resources = append(resources, s)
 		}
 	}
 
@@ -541,12 +544,15 @@ func newImportCmd() *cobra.Command {
 	var execAgent string
 
 	// Flags for engine.UpdateOptions.
+	var jsonDisplay bool
 	var diffDisplay bool
 	var eventLogPath string
 	var parallel int
+	var previewOnly bool
 	var showConfig bool
 	var skipPreview bool
 	var suppressOutputs bool
+	var suppressProgress bool
 	var suppressPermalink string
 	var yes bool
 	var protectResources bool
@@ -571,12 +577,15 @@ func newImportCmd() *cobra.Command {
 			"A single resource may be specified in the command line arguments or a set of\n" +
 			"resources may be specified by a JSON file.\n" +
 			"\n" +
-			"If using the command line args directly, the type, name, id and optional flags\n" +
+			"If using the command line args directly, the type token, name, id and optional flags\n" +
 			"must be provided.  For example:\n" +
 			"\n" +
 			"    pulumi import 'aws:iam/user:User' name id\n" +
 			"\n" +
-			"Or to fully specify parent and/or provider, subsitute the <urn> for each into the following:\n" +
+			"The type token and property used for resource lookup are available in the Import section of\n" +
+			"the resource's API documentation in the Pulumi Registry (https://www.pulumi.com/registry/)." +
+			"\n" +
+			"To fully specify parent and/or provider, subsitute the <urn> for each into the following:\n" +
 			"\n" +
 			"     pulumi import 'aws:iam/user:User' name id --parent 'parent=<urn>' --provider 'admin=<urn>'\n" +
 			"\n" +
@@ -600,7 +609,11 @@ func newImportCmd() *cobra.Command {
 			"                \"parent\": \"optional-parent-name\",\n" +
 			"                \"provider\": \"optional-provider-name\",\n" +
 			"                \"version\": \"optional-provider-version\",\n" +
+			"                \"pluginDownloadUrl\": \"optional-provider-plugin-url\",\n" +
+			"                \"logicalName\": \"optionalLogicalName\",\n" +
 			"                \"properties\": [\"optional-property-names\"],\n" +
+			"                \"component\": false,\n" +
+			"                \"remote\": false,\n" +
 			"            },\n" +
 			"            ...\n" +
 			"            {\n" +
@@ -622,6 +635,12 @@ func newImportCmd() *cobra.Command {
 			"resource that does specify a provider may specify the version of the provider\n" +
 			"that will be used for its import.\n" +
 			"\n" +
+			"A resource can define a logical name as well as its name for the name table.\n" +
+			"If a logical name is given, it will be used to name the resource in the Pulumi state.\n" +
+			"\n" +
+			"A resource can also be declared as a \"component\" (and optionally as \"remote\"). These resources\n" +
+			"don't have an id set and instead just create an empty placeholder component resource in the Pulumi state.\n" +
+			"\n" +
 			"Each resource may specify which input properties to import with;\n" +
 			"\n" +
 			"If a resource does not specify any properties the default behaviour is to\n" +
@@ -632,7 +651,7 @@ func newImportCmd() *cobra.Command {
 			"type, parent and provider information for you and just require you to fill in resource\n" +
 			"IDs and any properties.\n",
 		Run: cmdutil.RunResultFunc(func(cmd *cobra.Command, args []string) result.Result {
-			ctx := commandContext()
+			ctx := cmd.Context()
 
 			cwd, err := os.Getwd()
 			if err != nil {
@@ -681,7 +700,7 @@ func newImportCmd() *cobra.Command {
 
 					pluginSpec := workspace.PluginSpec{
 						Name: string(provider),
-						Kind: workspace.ResourcePlugin,
+						Kind: apitype.ResourcePlugin,
 					}
 					version, err := pkgWorkspace.InstallPlugin(pluginSpec, log)
 					if err != nil {
@@ -772,12 +791,13 @@ func newImportCmd() *cobra.Command {
 
 			yes = yes || skipPreview || skipConfirmations()
 			interactive := cmdutil.Interactive()
-			if !interactive && !yes {
+			if !interactive && !yes && !previewOnly {
 				return result.FromError(
-					errors.New("--yes or --skip-preview must be passed in to proceed when running in non-interactive mode"))
+					errors.New("--yes or --skip-preview or --preview-only" +
+						" must be passed in to proceed when running in non-interactive mode"))
 			}
 
-			opts, err := updateFlagsToOptions(interactive, skipPreview, yes)
+			opts, err := updateFlagsToOptions(interactive, skipPreview, yes, previewOnly)
 			if err != nil {
 				return result.FromError(err)
 			}
@@ -788,13 +808,15 @@ func newImportCmd() *cobra.Command {
 			}
 
 			opts.Display = display.Options{
-				Color:           cmdutil.GetGlobalColorization(),
-				ShowConfig:      showConfig,
-				SuppressOutputs: suppressOutputs,
-				IsInteractive:   interactive,
-				Type:            displayType,
-				EventLogPath:    eventLogPath,
-				Debug:           debug,
+				Color:            cmdutil.GetGlobalColorization(),
+				ShowConfig:       showConfig,
+				SuppressOutputs:  suppressOutputs,
+				SuppressProgress: suppressProgress,
+				IsInteractive:    interactive,
+				Type:             displayType,
+				EventLogPath:     eventLogPath,
+				Debug:            debug,
+				JSONDisplay:      jsonDisplay,
 			}
 
 			// we only suppress permalinks if the user passes true. the default is an empty string
@@ -805,14 +827,14 @@ func newImportCmd() *cobra.Command {
 				opts.Display.SuppressPermalink = false
 			}
 
-			filestateBackend, err := isFilestateBackend(opts.Display)
+			isDIYBackend, err := isDIYBackend(opts.Display)
 			if err != nil {
 				return result.FromError(err)
 			}
 
-			// by default, we are going to suppress the permalink when using self-managed backends
+			// by default, we are going to suppress the permalink when using DIY backends
 			// this can be re-enabled by explicitly passing "false" to the `suppress-permalink` flag
-			if suppressPermalink != "false" && filestateBackend {
+			if suppressPermalink != "false" && isDIYBackend {
 				opts.Display.SuppressPermalink = true
 			}
 
@@ -858,8 +880,8 @@ func newImportCmd() *cobra.Command {
 						return nil, nil, err
 					}
 					defer contract.IgnoreClose(pCtx.Host)
-
-					languagePlugin, err := ctx.Host.LanguageRuntime(cwd, cwd, proj.Runtime.Name(), nil)
+					programInfo := plugin.NewProgramInfo(cwd, cwd, "entry", nil)
+					languagePlugin, err := ctx.Host.LanguageRuntime(proj.Runtime.Name(), programInfo)
 					if err != nil {
 						return nil, nil, err
 					}
@@ -901,6 +923,7 @@ func newImportCmd() *cobra.Command {
 
 			stackName := s.Ref().Name().String()
 			configErr := workspace.ValidateStackConfigAndApplyProjectConfig(
+				ctx,
 				stackName,
 				proj,
 				cfg.Environment,
@@ -947,11 +970,11 @@ func newImportCmd() *cobra.Command {
 
 				if validImports {
 					// we only want to output the helper string if there is a set of valid imports to convert into code
-					// this protects against invalid package types or import errors that will not actually result in
+					// this protects against invalid package types or import errors that will not actually result
 					// in a codegen call
 					// It's a little bit more memory but is a better experience that writing to stdout and then an error
 					// occurring
-					if outputFilePath == "" {
+					if outputFilePath == "" && !jsonDisplay {
 						fmt.Print("Please copy the following code into your Pulumi application. Not doing so\n" +
 							"will cause Pulumi to report that an update will happen on the next update command.\n\n")
 						if protectResources {
@@ -1025,11 +1048,20 @@ func newImportCmd() *cobra.Command {
 		&parallel, "parallel", "p", defaultParallel,
 		"Allow P resource operations to run in parallel at once (1 for no parallelism).")
 	cmd.PersistentFlags().BoolVar(
+		&previewOnly, "preview-only", false,
+		"Only show a preview of the import, but don't perform the import itself")
+	cmd.PersistentFlags().BoolVar(
 		&skipPreview, "skip-preview", false,
 		"Do not calculate a preview before performing the import")
+	cmd.Flags().BoolVarP(
+		&jsonDisplay, "json", "j", false,
+		"Serialize the import diffs, operations, and overall output as JSON")
 	cmd.PersistentFlags().BoolVar(
 		&suppressOutputs, "suppress-outputs", false,
 		"Suppress display of stack outputs (in case they contain sensitive values)")
+	cmd.PersistentFlags().BoolVar(
+		&suppressProgress, "suppress-progress", false,
+		"Suppress display of periodic progress dots")
 	cmd.PersistentFlags().StringVar(
 		&suppressPermalink, "suppress-permalink", "",
 		"Suppress display of the state permalink")

@@ -21,6 +21,7 @@ import google.protobuf.empty_pb2
 import grpc
 import grpc.aio
 import typing
+import pulumi.callback_pb2
 import pulumi.provider_pb2
 import pulumi.resource_pb2
 
@@ -41,7 +42,7 @@ class ResourceMonitorStub:
         pulumi.provider_pb2.InvokeResponse,
     ]
     Call: grpc.UnaryUnaryMultiCallable[
-        pulumi.provider_pb2.CallRequest,
+        pulumi.resource_pb2.ResourceCallRequest,
         pulumi.provider_pb2.CallResponse,
     ]
     ReadResource: grpc.UnaryUnaryMultiCallable[
@@ -55,6 +56,14 @@ class ResourceMonitorStub:
     RegisterResourceOutputs: grpc.UnaryUnaryMultiCallable[
         pulumi.resource_pb2.RegisterResourceOutputsRequest,
         google.protobuf.empty_pb2.Empty,
+    ]
+    RegisterStackTransform: grpc.UnaryUnaryMultiCallable[
+        pulumi.callback_pb2.Callback,
+        google.protobuf.empty_pb2.Empty,
+    ]
+    RegisterProvider: grpc.UnaryUnaryMultiCallable[
+        pulumi.resource_pb2.RegisterProviderRequest,
+        pulumi.resource_pb2.RegisterProviderResponse,
     ]
 
 class ResourceMonitorServicer(metaclass=abc.ABCMeta):
@@ -81,7 +90,7 @@ class ResourceMonitorServicer(metaclass=abc.ABCMeta):
     
     def Call(
         self,
-        request: pulumi.provider_pb2.CallRequest,
+        request: pulumi.resource_pb2.ResourceCallRequest,
         context: grpc.ServicerContext,
     ) -> pulumi.provider_pb2.CallResponse: ...
     
@@ -102,5 +111,17 @@ class ResourceMonitorServicer(metaclass=abc.ABCMeta):
         request: pulumi.resource_pb2.RegisterResourceOutputsRequest,
         context: grpc.ServicerContext,
     ) -> google.protobuf.empty_pb2.Empty: ...
+    
+    def RegisterStackTransform(
+        self,
+        request: pulumi.callback_pb2.Callback,
+        context: grpc.ServicerContext,
+    ) -> google.protobuf.empty_pb2.Empty: ...
+    
+    def RegisterProvider(
+        self,
+        request: pulumi.resource_pb2.RegisterProviderRequest,
+        context: grpc.ServicerContext,
+    ) -> pulumi.resource_pb2.RegisterProviderResponse: ...
 
 def add_ResourceMonitorServicer_to_server(servicer: ResourceMonitorServicer, server: typing.Union[grpc.Server, grpc.aio.Server]) -> None: ...

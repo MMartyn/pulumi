@@ -7,6 +7,7 @@ import (
 	"io"
 	"math/big"
 	"strings"
+	"unicode"
 
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
@@ -31,7 +32,8 @@ func (g *generator) lowerExpression(expr model.Expression, typ model.Type) model
 		expr = g.awaitInvokes(expr)
 	}
 	expr = pcl.RewritePropertyReferences(expr)
-	expr, diags := pcl.RewriteApplies(expr, nameInfo(0), !g.asyncMain)
+	skipToJSONWhenRewritingApplies := true
+	expr, diags := pcl.RewriteAppliesWithSkipToJSON(expr, nameInfo(0), !g.asyncMain, skipToJSONWhenRewritingApplies)
 	if typ != nil {
 		var convertDiags hcl.Diagnostics
 		expr, convertDiags = pcl.RewriteConversions(expr, typ)
@@ -316,6 +318,12 @@ func enumNameWithPackage(enumToken string, pkgRef schema.PackageReference) (stri
 	name := tokenToName(enumToken)
 	pkg := makeValidIdentifier(components[0])
 	if mod := components[1]; mod != "" && mod != "index" {
+		// if the token has the format {pkg}:{mod}/{name}:{Name}
+		// then we simplify into {pkg}:{mod}:{Name}
+		modParts := strings.Split(mod, "/")
+		if len(modParts) == 2 && strings.EqualFold(modParts[1], components[2]) {
+			mod = modParts[0]
+		}
 		if pkgRef != nil {
 			mod = moduleName(mod, pkgRef)
 		}
@@ -408,7 +416,7 @@ func (g *generator) GenFunctionCallExpression(w io.Writer, expr *model.FunctionC
 	case "remoteAsset":
 		g.Fgenf(w, "new pulumi.asset.RemoteAsset(%.v)", expr.Args[0])
 	case "filebase64":
-		g.Fgenf(w, "Buffer.from(fs.readFileSync(%v, 'binary')).toString('base64')", expr.Args[0])
+		g.Fgenf(w, "fs.readFileSync(%v, { encoding: \"base64\" })", expr.Args[0])
 	case "filebase64sha256":
 		// Assuming the existence of the following helper method
 		g.Fgenf(w, "computeFilebase64sha256(%v)", expr.Args[0])
@@ -476,7 +484,11 @@ func (g *generator) GenFunctionCallExpression(w io.Writer, expr *model.FunctionC
 	case "fromBase64":
 		g.Fgenf(w, "Buffer.from(%v, \"base64\").toString(\"utf8\")", expr.Args[0])
 	case "toJSON":
-		g.Fgenf(w, "JSON.stringify(%v)", expr.Args[0])
+		if model.ContainsOutputs(expr.Args[0].Type()) {
+			g.Fgenf(w, "pulumi.jsonStringify(%v)", expr.Args[0])
+		} else {
+			g.Fgenf(w, "JSON.stringify(%v)", expr.Args[0])
+		}
 	case "sha1":
 		g.Fgenf(w, "crypto.createHash('sha1').update(%v).digest('hex')", expr.Args[0])
 	case "stack":
@@ -485,6 +497,8 @@ func (g *generator) GenFunctionCallExpression(w io.Writer, expr *model.FunctionC
 		g.Fgenf(w, "pulumi.getProject()")
 	case "cwd":
 		g.Fgen(w, "process.cwd()")
+	case "getOutput":
+		g.Fgenf(w, "%s.getOutput(%v)", expr.Args[0], expr.Args[1])
 
 	default:
 		var rng hcl.Range
@@ -499,6 +513,15 @@ func (g *generator) GenIndexExpression(w io.Writer, expr *model.IndexExpression)
 	g.Fgenf(w, "%.20v[%.v]", expr.Collection, expr.Key)
 }
 
+func escapeRune(c rune) string {
+	if uint(c) <= 0xFF {
+		return fmt.Sprintf("\\x%02x", c)
+	} else if uint(c) <= 0xFFFF {
+		return fmt.Sprintf("\\u%04x", c)
+	}
+	return fmt.Sprintf("\\u{%x}", c)
+}
+
 func (g *generator) genStringLiteral(w io.Writer, v string) {
 	builder := strings.Builder{}
 	newlines := strings.Count(v, "\n")
@@ -508,13 +531,16 @@ func (g *generator) genStringLiteral(w io.Writer, v string) {
 		// ECMA-262 11.8.4 ("String Literals").
 		builder.WriteRune('"')
 		for _, c := range v {
-			if c == '\n' {
-				builder.WriteString(`\n`)
-			} else {
-				if c == '"' || c == '\\' {
-					builder.WriteRune('\\')
-				}
+			if c == '"' || c == '\\' {
+				builder.WriteRune('\\')
 				builder.WriteRune(c)
+			} else if c == '\n' {
+				builder.WriteString(`\n`)
+			} else if unicode.IsPrint(c) {
+				builder.WriteRune(c)
+			} else {
+				// This is a non-printable character. We'll emit an escape sequence for it.
+				builder.WriteString(escapeRune(c))
 			}
 		}
 		builder.WriteRune('"')
@@ -524,15 +550,22 @@ func (g *generator) genStringLiteral(w io.Writer, v string) {
 		runes := []rune(v)
 		builder.WriteRune('`')
 		for i, c := range runes {
-			switch c {
-			case '$':
+			if c == '`' || c == '\\' {
+				builder.WriteRune('\\')
+				builder.WriteRune(c)
+			} else if c == '$' {
 				if i < len(runes)-1 && runes[i+1] == '{' {
 					builder.WriteRune('\\')
+					builder.WriteRune('$')
 				}
-			case '`', '\\':
-				builder.WriteRune('\\')
+			} else if c == '\n' {
+				builder.WriteRune('\n')
+			} else if unicode.IsPrint(c) {
+				builder.WriteRune(c)
+			} else {
+				// This is a non-printable character. We'll emit an escape sequence for it.
+				builder.WriteString(escapeRune(c))
 			}
-			builder.WriteRune(c)
 		}
 		builder.WriteRune('`')
 	}

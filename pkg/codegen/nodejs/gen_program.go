@@ -169,6 +169,7 @@ func GenerateProgram(program *pcl.Program) (map[string][]byte, hcl.Diagnostics, 
 func GenerateProject(
 	directory string, project workspace.Project,
 	program *pcl.Program, localDependencies map[string]string,
+	forceTsc bool,
 ) error {
 	files, diagnostics, err := GenerateProgram(program)
 	if err != nil {
@@ -178,31 +179,31 @@ func GenerateProject(
 		return diagnostics
 	}
 
+	// Check the project for "main" as that changes where we write out files and some relative paths.
+	rootDirectory := directory
+	if project.Main != "" {
+		directory = filepath.Join(rootDirectory, project.Main)
+		// mkdir -p the subdirectory
+		err = os.MkdirAll(directory, 0o700)
+		if err != nil {
+			return fmt.Errorf("create main directory: %w", err)
+		}
+	}
+
 	// Set the runtime to "nodejs" then marshal to Pulumi.yaml
-	project.Runtime = workspace.NewProjectRuntimeInfo("nodejs", nil)
+	runtime := workspace.NewProjectRuntimeInfo("nodejs", nil)
+	if forceTsc {
+		runtime.SetOption("typescript", false)
+	}
+	project.Runtime = runtime
+
 	projectBytes, err := encoding.YAML.Marshal(project)
 	if err != nil {
 		return err
 	}
-	files["Pulumi.yaml"] = projectBytes
-
-	// The local dependencies map is a map of package name to the path to the package, the path could be
-	// absolute or a relative path but we want to ensure we emit relative paths in the package.json.
-	for k, v := range localDependencies {
-		absPath := v
-		if !filepath.IsAbs(v) {
-			absPath, err = filepath.Abs(v)
-			if err != nil {
-				return fmt.Errorf("absolute path of %s: %w", v, err)
-			}
-		}
-
-		relPath, err := filepath.Rel(directory, absPath)
-		if err != nil {
-			return fmt.Errorf("relative path of %s from %s: %w", absPath, directory, err)
-		}
-
-		localDependencies[k] = relPath
+	err = os.WriteFile(path.Join(rootDirectory, "Pulumi.yaml"), projectBytes, 0o600)
+	if err != nil {
+		return fmt.Errorf("write Pulumi.yaml: %w", err)
 	}
 
 	// Build the package.json
@@ -228,7 +229,15 @@ func GenerateProject(
 	if err != nil {
 		return err
 	}
-	for _, p := range packages {
+	// Sort the dependencies to ensure a deterministic package.json. Note that the typescript and
+	// @pulumi/pulumi dependencies are already added above and not sorted.
+	sortedPackageNames := make([]string, 0, len(packages))
+	for k := range packages {
+		sortedPackageNames = append(sortedPackageNames, k)
+	}
+	sort.Strings(sortedPackageNames)
+	for _, k := range sortedPackageNames {
+		p := packages[k]
 		if p.Name == PulumiToken {
 			continue
 		}
@@ -1240,7 +1249,7 @@ func (g *generator) genConfigVariable(w io.Writer, v *pcl.ConfigVariable) {
 }
 
 func (g *generator) genLocalVariable(w io.Writer, v *pcl.LocalVariable) {
-	// TODO(pdg): trivia
+	g.genTrivia(w, v.Definition.Tokens.Name)
 	g.Fgenf(w, "%sconst %s = %.3v;\n", g.Indent, v.Name(), g.lowerExpression(v.Definition.Value, v.Type()))
 }
 

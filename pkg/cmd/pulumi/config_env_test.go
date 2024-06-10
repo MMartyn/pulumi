@@ -39,7 +39,6 @@ func cleanStdout(s string) string {
 }
 
 func newConfigEnvCmdForTest(
-	ctx context.Context,
 	stdin io.Reader,
 	stdout io.Writer,
 	projectYAML string,
@@ -49,7 +48,6 @@ func newConfigEnvCmdForTest(
 	newStackYAML *string,
 ) *configEnvCmd {
 	return newConfigEnvCmdForTestWithCheckYAMLEnvironment(
-		ctx,
 		stdin,
 		stdout,
 		projectYAML,
@@ -67,7 +65,6 @@ func newConfigEnvCmdForTest(
 }
 
 func newConfigEnvCmdForTestWithCheckYAMLEnvironment(
-	ctx context.Context,
 	stdin io.Reader,
 	stdout io.Writer,
 	projectYAML string,
@@ -87,7 +84,6 @@ func newConfigEnvCmdForTestWithCheckYAMLEnvironment(
 ) *configEnvCmd {
 	stackRef := "stack"
 	return &configEnvCmd{
-		ctx:         ctx,
 		stdin:       stdin,
 		stdout:      stdout,
 		interactive: true,
@@ -190,7 +186,6 @@ func (m envDefMap) LoadEnvironment(ctx context.Context, name string) ([]byte, ev
 }
 
 func newConfigEnvCmdForInitTest(
-	ctx context.Context,
 	stdin io.Reader,
 	stdout io.Writer,
 	projectYAML string,
@@ -199,7 +194,6 @@ func newConfigEnvCmdForInitTest(
 	envs envDefMap,
 ) *configEnvCmd {
 	return newConfigEnvCmdForTestWithCheckYAMLEnvironment(
-		ctx,
 		stdin,
 		stdout,
 		projectYAML,
@@ -214,7 +208,7 @@ func newConfigEnvCmdForInitTest(
 			if err != nil {
 				return nil, err
 			}
-			_, checkDiags := eval.CheckEnvironment(ctx, name, decl, nil, envs)
+			_, checkDiags := eval.CheckEnvironment(ctx, name, decl, nil, envs, &esc.ExecContext{})
 			diags.Extend(checkDiags...)
 			if len(diags) != 0 {
 				return mapEvalDiags(diags), nil
@@ -231,7 +225,7 @@ func newConfigEnvCmdForInitTest(
 			if err != nil {
 				return nil, nil, err
 			}
-			env, checkDiags := eval.CheckEnvironment(ctx, "<yaml>", decl, nil, envs)
+			env, checkDiags := eval.CheckEnvironment(ctx, "<yaml>", decl, nil, envs, &esc.ExecContext{})
 			diags.Extend(checkDiags...)
 			return env, mapEvalDiags(diags), nil
 		},

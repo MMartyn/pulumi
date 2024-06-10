@@ -55,10 +55,10 @@ type typeDetails struct {
 type imports codegen.StringSet
 
 // defaultMinPythonVersion is what we use as the minimum version field in generated
-// package metadata if the schema does not provide a vaule. This version corresponds
+// package metadata if the schema does not provide a value. This version corresponds
 // to the minimum supported version as listed in the reference documentation:
-// https://www.pulumi.com/docs/reference/pkg/python/pulumi/
-const defaultMinPythonVersion = ">=3.7"
+// https://www.pulumi.com/docs/languages-sdks/python/
+const defaultMinPythonVersion = ">=3.8"
 
 func (imports imports) addType(mod *modContext, t *schema.ObjectType, input bool) {
 	imports.addTypeIf(mod, t, input, nil /*predicate*/)
@@ -638,7 +638,7 @@ func (mod *modContext) hasTypes(input bool) bool {
 
 func (mod *modContext) isEmpty() bool {
 	if len(mod.extraSourceFiles) > 0 || len(mod.functions) > 0 || len(mod.resources) > 0 || len(mod.types) > 0 ||
-		mod.isConfig {
+		len(mod.enums) > 0 || mod.isConfig {
 		return false
 	}
 	for _, child := range mod.children {
@@ -1435,7 +1435,8 @@ func (mod *modContext) genResource(res *schema.Resource) (string, error) {
 		cmdutil.Diag().Warningf(&diag.Diag{Message: err.Error()})
 	}
 	if len(replaceOnChangesProps) > 0 {
-		replaceOnChangesStrings := schema.PropertyListJoinToString(replaceOnChangesProps, PyName)
+		replaceOnChangesStrings := schema.PropertyListJoinToString(replaceOnChangesProps,
+			func(x string) string { return x })
 		fmt.Fprintf(w, `        replace_on_changes = pulumi.ResourceOptions(replace_on_changes=["%s"])`, strings.Join(replaceOnChangesStrings, `", "`))
 		fmt.Fprintf(w, "\n        opts = pulumi.ResourceOptions.merge(opts, replace_on_changes)\n")
 	}
@@ -2086,6 +2087,9 @@ func genPulumiPluginFile(pkg *schema.Package) ([]byte, error) {
 	if info, ok := pkg.Language["python"].(PackageInfo); pkg.Version != nil && ok && info.RespectSchemaVersion {
 		plugin.Version = pkg.Version.String()
 	}
+	if pkg.SupportPack {
+		plugin.Version = pkg.Version.String()
+	}
 
 	return plugin.JSON()
 }
@@ -2105,12 +2109,18 @@ func genPackageMetadata(
 	fmt.Fprintf(w, "\n\n")
 
 	// Create a constant for the version number to replace during build
-	version := "0.0.0"
+	version := "\"0.0.0\""
 	info, ok := pkg.Language["python"].(PackageInfo)
 	if pkg.Version != nil && ok && info.RespectSchemaVersion {
-		version = pypiVersion(*pkg.Version)
+		version = "\"" + PypiVersion(*pkg.Version) + "\""
 	}
-	fmt.Fprintf(w, "VERSION = \"%s\"\n", version)
+	if pkg.SupportPack {
+		if pkg.Version == nil {
+			return "", errors.New("package version is required")
+		}
+		version = "\"" + PypiVersion(*pkg.Version) + "\""
+	}
+	fmt.Fprintf(w, "VERSION = %s\n", version)
 
 	// Generate a readme method which will load README.rst, we use this to fill out the
 	// long_description field in the setup call.
@@ -3041,7 +3051,13 @@ func genPyprojectTOML(tool string,
 	version := "0.0.0"
 	info, ok := pkg.Language["python"].(PackageInfo)
 	if pkg.Version != nil && ok && info.RespectSchemaVersion {
-		version = pypiVersion(*pkg.Version)
+		version = PypiVersion(*pkg.Version)
+	}
+	if pkg.SupportPack {
+		if pkg.Version == nil {
+			return "", errors.New("package version is required")
+		}
+		version = PypiVersion(*pkg.Version)
 	}
 	schema.Project.Version = &version
 

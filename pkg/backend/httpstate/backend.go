@@ -39,7 +39,7 @@ import (
 	esc_client "github.com/pulumi/esc/cmd/esc/cli/client"
 	"github.com/pulumi/pulumi/pkg/v3/backend"
 	"github.com/pulumi/pulumi/pkg/v3/backend/display"
-	"github.com/pulumi/pulumi/pkg/v3/backend/filestate"
+	"github.com/pulumi/pulumi/pkg/v3/backend/diy"
 	"github.com/pulumi/pulumi/pkg/v3/backend/httpstate/client"
 	sdkDisplay "github.com/pulumi/pulumi/pkg/v3/display"
 	"github.com/pulumi/pulumi/pkg/v3/engine"
@@ -152,9 +152,9 @@ func ValueOrDefaultURL(cloudURL string) string {
 	}
 
 	// If that didn't work, see if we have a current cloud, and use that. Note we need to be careful
-	// to ignore the local cloud.
+	// to ignore the diy cloud.
 	if creds, err := workspace.GetStoredCredentials(); err == nil {
-		if creds.Current != "" && !filestate.IsFileStateBackendURL(creds.Current) {
+		if creds.Current != "" && !diy.IsDIYBackendURL(creds.Current) {
 			return creds.Current
 		}
 	}
@@ -173,7 +173,7 @@ type Backend interface {
 	Client() *client.Client
 
 	RunDeployment(ctx context.Context, stackRef backend.StackReference, req apitype.CreateDeploymentRequest,
-		opts display.Options) error
+		opts display.Options, deploymentInitiator string) error
 
 	// Queries the backend for resources based on the given query parameters.
 	Search(
@@ -752,8 +752,7 @@ func (b *cloudBackend) ParseStackReference(s string) (backend.StackReference, er
 
 	if qualifiedName.Project == "" {
 		if b.currentProject == nil {
-			return nil, errors.New("If you're using the --stack flag, " +
-				"pass the fully qualified name (org/project/stack)")
+			return nil, errors.New("no current project found, pass the fully qualified stack name (org/project/stack)")
 		}
 
 		qualifiedName.Project = b.currentProject.Name.String()
@@ -1078,7 +1077,7 @@ func (b *cloudBackend) RenameStack(ctx context.Context, stack backend.Stack,
 func (b *cloudBackend) Preview(ctx context.Context, stack backend.Stack,
 	op backend.UpdateOperation, events chan<- engine.Event,
 ) (*deploy.Plan, sdkDisplay.ResourceChanges, result.Result) {
-	// We can skip PreviewtThenPromptThenExecute, and just go straight to Execute.
+	// We can skip PreviewThenPromptThenExecute, and just go straight to Execute.
 	opts := backend.ApplierOptions{
 		DryRun:   true,
 		ShowLink: true,
@@ -1097,18 +1096,56 @@ func (b *cloudBackend) Import(ctx context.Context, stack backend.Stack,
 	op backend.UpdateOperation, imports []deploy.Import,
 ) (sdkDisplay.ResourceChanges, result.Result) {
 	op.Imports = imports
+
+	if op.Opts.PreviewOnly {
+		// We can skip PreviewThenPromptThenExecute, and just go straight to Execute.
+		opts := backend.ApplierOptions{
+			DryRun:   true,
+			ShowLink: true,
+		}
+
+		op.Opts.Engine.GeneratePlan = false
+		_, changes, res := b.apply(
+			ctx, apitype.ResourceImportUpdate, stack, op, opts, nil /*events*/)
+		return changes, res
+	}
+
 	return backend.PreviewThenPromptThenExecute(ctx, apitype.ResourceImportUpdate, stack, op, b.apply)
 }
 
 func (b *cloudBackend) Refresh(ctx context.Context, stack backend.Stack,
 	op backend.UpdateOperation,
 ) (sdkDisplay.ResourceChanges, result.Result) {
+	if op.Opts.PreviewOnly {
+		// We can skip PreviewThenPromptThenExecute, and just go straight to Execute.
+		opts := backend.ApplierOptions{
+			DryRun:   true,
+			ShowLink: true,
+		}
+
+		op.Opts.Engine.GeneratePlan = false
+		_, changes, res := b.apply(
+			ctx, apitype.RefreshUpdate, stack, op, opts, nil /*events*/)
+		return changes, res
+	}
 	return backend.PreviewThenPromptThenExecute(ctx, apitype.RefreshUpdate, stack, op, b.apply)
 }
 
 func (b *cloudBackend) Destroy(ctx context.Context, stack backend.Stack,
 	op backend.UpdateOperation,
 ) (sdkDisplay.ResourceChanges, result.Result) {
+	if op.Opts.PreviewOnly {
+		// We can skip PreviewThenPromptThenExecute, and just go straight to Execute.
+		opts := backend.ApplierOptions{
+			DryRun:   true,
+			ShowLink: true,
+		}
+
+		op.Opts.Engine.GeneratePlan = false
+		_, changes, res := b.apply(
+			ctx, apitype.DestroyUpdate, stack, op, opts, nil /*events*/)
+		return changes, res
+	}
 	return backend.PreviewThenPromptThenExecute(ctx, apitype.DestroyUpdate, stack, op, b.apply)
 }
 
@@ -1153,10 +1190,13 @@ func (b *cloudBackend) PromptAI(
 	ctx context.Context, requestBody AIPromptRequestBody,
 ) (*http.Response, error) {
 	res, err := b.client.SubmitAIPrompt(ctx, requestBody)
+	if err != nil {
+		return nil, err
+	}
 	if res.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("failed to submit AI prompt: %s", res.Status)
 	}
-	return res, err
+	return res, nil
 }
 
 type updateMetadata struct {
@@ -1328,8 +1368,12 @@ func (b *cloudBackend) runEngineAction(
 		close(eventsDone)
 	}()
 
-	persister := b.newSnapshotPersister(ctx, u.update, u.tokenSource)
-	snapshotManager := backend.NewSnapshotManager(persister, op.SecretsManager, u.GetTarget().Snapshot)
+	// We only need a snapshot manager if we're doing an update.
+	var snapshotManager *backend.SnapshotManager
+	if kind != apitype.PreviewUpdate && !dryRun {
+		persister := b.newSnapshotPersister(ctx, u.update, u.tokenSource)
+		snapshotManager = backend.NewSnapshotManager(persister, op.SecretsManager, u.GetTarget().Snapshot)
+	}
 
 	// Depending on the action, kick off the relevant engine activity.  Note that we don't immediately check and
 	// return error conditions, because we will do so below after waiting for the display channels to close.
@@ -1358,8 +1402,8 @@ func (b *cloudBackend) runEngineAction(
 		_, changes, updateErr = engine.Refresh(u, engineCtx, op.Opts.Engine, dryRun)
 	case apitype.DestroyUpdate:
 		_, changes, updateErr = engine.Destroy(u, engineCtx, op.Opts.Engine, dryRun)
-	case apitype.StackImportUpdate:
-		contract.Failf("unexpected stack import event")
+	case apitype.StackImportUpdate, apitype.RenameUpdate:
+		contract.Failf("unexpected %s event", kind)
 	default:
 		contract.Failf("Unrecognized update kind: %s", kind)
 	}
@@ -1369,11 +1413,17 @@ func (b *cloudBackend) runEngineAction(
 	<-displayDone
 	cancellationScope.Close() // Don't take any cancellations anymore, we're shutting down.
 	close(engineEvents)
-	err = snapshotManager.Close()
-	// Historically we ignored this error (using IgnoreClose so it would log to the V11 log).
-	// To minimize the immediate blast radius of this to start with we're just going to write an error to the user.
-	if err != nil {
-		cmdutil.Diag().Errorf(diag.Message("", "Snapshot write failed: %v"), err)
+	if snapshotManager != nil {
+		err = snapshotManager.Close()
+		// If the snapshot manager failed to close, we should return that error.
+		// Even though all the parts of the operation have potentially succeeded, a
+		// snapshotting failure is likely to rear its head on the next
+		// operation/invocation (e.g. an invalid snapshot that fails integrity
+		// checks, or a failure to write that means the snapshot is incomplete).
+		// Reporting now should make debugging and reporting easier.
+		if err != nil {
+			return plan, changes, result.FromError(fmt.Errorf("writing snapshot: %w", err))
+		}
 	}
 
 	// Make sure that the goroutine writing to displayEvents and callerEventsOpt
@@ -1521,7 +1571,7 @@ func (b *cloudBackend) GetLogs(ctx context.Context,
 	if targetErr != nil {
 		return nil, targetErr
 	}
-	return filestate.GetLogsForTarget(target, logQuery)
+	return diy.GetLogsForTarget(target, logQuery)
 }
 
 // ExportDeployment exports a deployment _from_ the backend service.
@@ -1676,7 +1726,7 @@ func (b *cloudBackend) waitForUpdate(ctx context.Context, actionLabel string, up
 
 func displayEvents(action string, events <-chan displayEvent, done chan<- bool, opts display.Options) {
 	prefix := fmt.Sprintf("%s%s...", cmdutil.EmojiOr("✨ ", "@ "), action)
-	spinner, ticker := cmdutil.NewSpinnerAndTicker(prefix, nil, opts.Color, 8 /*timesPerSecond*/)
+	spinner, ticker := cmdutil.NewSpinnerAndTicker(prefix, nil, opts.Color, 8 /*timesPerSecond*/, opts.SuppressProgress)
 
 	defer func() {
 		spinner.Reset()
@@ -1799,14 +1849,14 @@ func (b *cloudBackend) UpdateStackTags(ctx context.Context,
 const pulumiOperationHeader = "Pulumi operation"
 
 func (b *cloudBackend) RunDeployment(ctx context.Context, stackRef backend.StackReference,
-	req apitype.CreateDeploymentRequest, opts display.Options,
+	req apitype.CreateDeploymentRequest, opts display.Options, deploymentInitiator string,
 ) error {
 	stackID, err := b.getCloudStackIdentifier(stackRef)
 	if err != nil {
 		return err
 	}
 
-	resp, err := b.client.CreateDeployment(ctx, stackID, req)
+	resp, err := b.client.CreateDeployment(ctx, stackID, req, deploymentInitiator)
 	if err != nil {
 		return err
 	}
@@ -1942,8 +1992,9 @@ func (c httpstateBackendClient) GetStackOutputs(ctx context.Context, name string
 	// When using the cloud backend, require that stack references are fully qualified so they
 	// look like "<org>/<project>/<stack>"
 	if strings.Count(name, "/") != 2 {
-		return nil, errors.New("a stack reference's name should be of the form " +
-			"'<organization>/<project>/<stack>'. See https://pulumi.io/help/stack-reference for more information.")
+		return nil, errors.New("a stack reference's name should be of the form '<organization>/<project>/<stack>'. " +
+			"See https://www.pulumi.com/docs/using-pulumi/stack-outputs-and-references/#using-stack-references " +
+			"for more information.")
 	}
 
 	return c.backend.GetStackOutputs(ctx, name)

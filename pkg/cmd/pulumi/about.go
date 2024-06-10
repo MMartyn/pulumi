@@ -35,6 +35,7 @@ import (
 	"github.com/pulumi/pulumi/pkg/v3/resource/deploy"
 	"github.com/pulumi/pulumi/pkg/v3/resource/stack"
 	"github.com/pulumi/pulumi/pkg/v3/version"
+	"github.com/pulumi/pulumi/sdk/v3/go/common/apitype"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/diag"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource/plugin"
@@ -64,7 +65,7 @@ func newAboutCmd() *cobra.Command {
 			" - the current backend\n",
 		Args: cmdutil.MaximumNArgs(0),
 		Run: cmdutil.RunFunc(func(cmd *cobra.Command, args []string) error {
-			ctx := commandContext()
+			ctx := cmd.Context()
 			summary := getSummaryAbout(ctx, transitiveDependencies, stack)
 			if jsonOut {
 				return printJSON(summary)
@@ -145,11 +146,12 @@ func getSummaryAbout(ctx context.Context, transitiveDependencies bool, selectedS
 				result.Plugins = plugins
 			}
 
-			lang, err := pluginContext.Host.LanguageRuntime(projinfo.Root, pwd, proj.Runtime.Name(), proj.Runtime.Options())
+			programInfo := plugin.NewProgramInfo(projinfo.Root, pwd, program, proj.Runtime.Options())
+			lang, err := pluginContext.Host.LanguageRuntime(proj.Runtime.Name(), programInfo)
 			if err != nil {
 				addError(err, "Failed to load language plugin "+proj.Runtime.Name())
 			} else {
-				aboutResponse, err := lang.About()
+				aboutResponse, err := lang.About(programInfo)
 				if err != nil {
 					addError(err, "Failed to get information about the project runtime")
 				} else {
@@ -161,8 +163,7 @@ func getSummaryAbout(ctx context.Context, transitiveDependencies bool, selectedS
 					}
 				}
 
-				progInfo := plugin.ProgInfo{Pwd: pwd, Program: program}
-				deps, err := lang.GetProgramDependencies(progInfo, transitiveDependencies)
+				deps, err := lang.GetProgramDependencies(programInfo, transitiveDependencies)
 				if err != nil {
 					addError(err, "Failed to get information about the Pulumi program's dependencies")
 				} else {
@@ -170,7 +171,7 @@ func getSummaryAbout(ctx context.Context, transitiveDependencies bool, selectedS
 					for i, dep := range deps {
 						result.Dependencies[i] = programDependencyAbout{
 							Name:    dep.Name,
-							Version: dep.Version.String(),
+							Version: dep.Version,
 						}
 					}
 				}
@@ -223,8 +224,9 @@ func (summary *summaryAbout) Print() {
 }
 
 type pluginAbout struct {
-	Name    string          `json:"name"`
-	Version *semver.Version `json:"version"`
+	Name    string             `json:"name"`
+	Version *semver.Version    `json:"version"`
+	Kind    apitype.PluginKind `json:"kind"`
 }
 
 func getPluginsAbout(ctx *plugin.Context, proj *workspace.Project, pwd, main string) ([]pluginAbout, error) {
@@ -248,6 +250,7 @@ func getPluginsAbout(ctx *plugin.Context, proj *workspace.Project, pwd, main str
 		plugins[i] = pluginAbout{
 			Name:    p.Name,
 			Version: p.Version,
+			Kind:    p.Kind,
 		}
 	}
 	return plugins, nil
@@ -256,7 +259,6 @@ func getPluginsAbout(ctx *plugin.Context, proj *workspace.Project, pwd, main str
 func formatPlugins(p []pluginAbout) string {
 	rows := []cmdutil.TableRow{}
 	for _, plugin := range p {
-		name := plugin.Name
 		var version string
 		if plugin.Version != nil {
 			version = plugin.Version.String()
@@ -264,11 +266,11 @@ func formatPlugins(p []pluginAbout) string {
 			version = "unknown"
 		}
 		rows = append(rows, cmdutil.TableRow{
-			Columns: []string{name, version},
+			Columns: []string{string(plugin.Kind), plugin.Name, version},
 		})
 	}
 	table := cmdutil.Table{
-		Headers: []string{"NAME", "VERSION"},
+		Headers: []string{"KIND", "NAME", "VERSION"},
 		Rows:    rows,
 	}
 	return "Plugins\n" + table.String()
@@ -588,8 +590,8 @@ func getProjectPluginsSilently(
 	defer func() { os.Stdout = stdout }()
 	os.Stdout = w
 
-	return plugin.GetRequiredPlugins(ctx.Host, ctx.Root, plugin.ProgInfo{
-		Pwd:     pwd,
-		Program: main,
-	}, proj, plugin.AllPlugins)
+	programInfo := plugin.NewProgramInfo(ctx.Root, pwd, main, proj.Runtime.Options())
+	runtimeName := proj.Runtime.Name()
+	projectName := string(proj.Name)
+	return plugin.GetRequiredPlugins(ctx.Host, runtimeName, projectName, programInfo, plugin.AllPlugins)
 }

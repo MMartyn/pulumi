@@ -14,17 +14,19 @@
 
 import assert from "assert";
 import * as semver from "semver";
+import * as tmp from "tmp";
 import * as upath from "upath";
 
 import {
+    CommandResult,
     ConfigMap,
     EngineEvent,
     fullyQualifiedStackName,
     LocalWorkspace,
     OutputMap,
     ProjectSettings,
+    PulumiCommand,
     Stack,
-    parseAndValidatePulumiVersion,
 } from "../../automation";
 import { ComponentResource, ComponentResourceOptions, Config, output } from "../../index";
 import { getTestOrg, getTestSuffix } from "./util";
@@ -139,6 +141,109 @@ describe("LocalWorkspace", () => {
         });
         afterEach(async () => {
             await workspace.removeStack(stackName);
+        });
+    });
+    describe("ListStack Methods", async () => {
+        describe("ListStacks", async () => {
+            const stackJson = `[
+                    {
+                        "name": "testorg1/testproj1/teststack1",
+                        "current": false,
+                        "url": "https://app.pulumi.com/testorg1/testproj1/teststack1"
+                    },
+                    {
+                        "name": "testorg1/testproj1/teststack2",
+                        "current": false,
+                        "url": "https://app.pulumi.com/testorg1/testproj1/teststack2"
+                    }
+                ]`;
+            it(`should handle stacks correctly for listStacks`, async () => {
+                const mockWithReturnedStacks = {
+                    command: "pulumi",
+                    version: null,
+                    run: async (args: string[], cwd: string, additionalEnv: { [key: string]: string }) => {
+                        return new CommandResult(stackJson, "", 0);
+                    },
+                };
+
+                const workspace = await LocalWorkspace.create({ pulumiCommand: mockWithReturnedStacks });
+                const stacks = await workspace.listStacks();
+
+                assert.strictEqual(stacks.length, 2);
+                assert.strictEqual(stacks[0].name, "testorg1/testproj1/teststack1");
+                assert.strictEqual(stacks[0].current, false);
+                assert.strictEqual(stacks[0].url, "https://app.pulumi.com/testorg1/testproj1/teststack1");
+                assert.strictEqual(stacks[1].name, "testorg1/testproj1/teststack2");
+                assert.strictEqual(stacks[1].current, false);
+                assert.strictEqual(stacks[1].url, "https://app.pulumi.com/testorg1/testproj1/teststack2");
+            });
+
+            it(`should use correct args for listStacks`, async () => {
+                let capturedArgs: string[] = [];
+                const mockPulumiCommand = {
+                    command: "pulumi",
+                    version: null,
+                    run: async (args: string[], cwd: string, additionalEnv: { [key: string]: string }) => {
+                        capturedArgs = args;
+                        return new CommandResult(stackJson, "", 0);
+                    },
+                };
+                const workspace = await LocalWorkspace.create({
+                    pulumiCommand: mockPulumiCommand,
+                });
+                await workspace.listStacks();
+                assert.deepStrictEqual(capturedArgs, ["stack", "ls", "--json"]);
+            });
+        });
+
+        describe("ListStacks with all", async () => {
+            const stackJson = `[
+                    {
+                        "name": "testorg1/testproj1/teststack1",
+                        "current": false,
+                        "url": "https://app.pulumi.com/testorg1/testproj1/teststack1"
+                    },
+                    {
+                        "name": "testorg1/testproj2/teststack2",
+                        "current": false,
+                        "url": "https://app.pulumi.com/testorg1/testproj2/teststack2"
+                    }
+                ]`;
+            it(`should handle stacks correctly for listStacks when all is set`, async () => {
+                const mockWithReturnedStacks = {
+                    command: "pulumi",
+                    version: null,
+                    run: async () => new CommandResult(stackJson, "", 0),
+                };
+                const workspace = await LocalWorkspace.create({
+                    pulumiCommand: mockWithReturnedStacks,
+                });
+                const stacks = await workspace.listStacks({ all: true });
+                assert.strictEqual(stacks.length, 2);
+                assert.strictEqual(stacks[0].name, "testorg1/testproj1/teststack1");
+                assert.strictEqual(stacks[0].current, false);
+                assert.strictEqual(stacks[0].url, "https://app.pulumi.com/testorg1/testproj1/teststack1");
+                assert.strictEqual(stacks[1].name, "testorg1/testproj2/teststack2");
+                assert.strictEqual(stacks[1].current, false);
+                assert.strictEqual(stacks[1].url, "https://app.pulumi.com/testorg1/testproj2/teststack2");
+            });
+
+            it(`should use correct args for listStacks when all is set`, async () => {
+                let capturedArgs: string[] = [];
+                const mockPuluiCommand = {
+                    command: "pulumi",
+                    version: null,
+                    run: async (args: string[], cwd: string, additionalEnv: { [key: string]: string }) => {
+                        capturedArgs = args;
+                        return new CommandResult(stackJson, "", 0);
+                    },
+                };
+                const workspace = await LocalWorkspace.create({
+                    pulumiCommand: mockPuluiCommand,
+                });
+                await workspace.listStacks({ all: true });
+                assert.deepStrictEqual(capturedArgs, ["stack", "ls", "--json", "--all"]);
+            });
         });
     });
     it(`Environment functions`, async function () {
@@ -619,7 +724,7 @@ describe("LocalWorkspace", () => {
             };
         };
         const projectName = "inline_node";
-        const stackNames = Array.from(Array(10).keys()).map((_) =>
+        const stackNames = Array.from(Array(30).keys()).map((_) =>
             fullyQualifiedStackName(getTestOrg(), projectName, `int_test${getTestSuffix()}`),
         );
 
@@ -660,8 +765,10 @@ describe("LocalWorkspace", () => {
 
             await stack.workspace.removeStack(stack.name);
         };
-
-        await Promise.all(stackNames.map(async (stackName) => await testStackLifetime(stackName)));
+        for (let i = 0; i < stackNames.length; i += 10) {
+            const chunk = stackNames.slice(i, i + 10);
+            await Promise.all(chunk.map(async (stackName) => await testStackLifetime(stackName)));
+        }
     });
     it(`handles events`, async () => {
         const program = async () => {
@@ -1040,6 +1147,60 @@ describe("LocalWorkspace", () => {
         assert(ws.pulumiVersion);
         assert.strictEqual(versionRegex.test(ws.pulumiVersion), true);
     });
+    it("sets pulumi version when using a custom CLI instance", async () => {
+        const tmpDir = tmp.dirSync({ prefix: "automation-test-", unsafeCleanup: true });
+        try {
+            const cmd = await PulumiCommand.get();
+            const ws = await LocalWorkspace.create({ pulumiCommand: cmd });
+            assert.strictEqual(versionRegex.test(ws.pulumiVersion), true);
+        } finally {
+            tmpDir.removeCallback();
+        }
+    });
+    it("throws when attempting to retrieve an invalid pulumi version", async () => {
+        const mockWithNoVersion = {
+            command: "pulumi",
+            version: null,
+            run: async () => new CommandResult("some output", "", 0),
+        };
+        const ws = await LocalWorkspace.create({
+            pulumiCommand: mockWithNoVersion,
+            envVars: {
+                PULUMI_AUTOMATION_API_SKIP_VERSION_CHECK: "true",
+            },
+        });
+        assert.throws(() => ws.pulumiVersion);
+    });
+    it("fails creation if remote operation is not supported", async () => {
+        const mockWithNoRemoteSupport = {
+            command: "pulumi",
+            version: new semver.SemVer("2.0.0"),
+            // We inspect the output of `pulumi preview --help` to determine
+            // if the CLI supports remote operations, see
+            // `LocalWorkspace.checkRemoteSupport`.
+            run: async () => new CommandResult("some output", "", 0),
+        };
+        await assert.rejects(LocalWorkspace.create({ pulumiCommand: mockWithNoRemoteSupport, remote: true }));
+    });
+    it("bypasses remote support check", async () => {
+        const mockWithNoRemoteSupport = {
+            command: "pulumi",
+            version: new semver.SemVer("2.0.0"),
+            // We inspect the output of `pulumi preview --help` to determine
+            // if the CLI supports remote operations, see
+            // `LocalWorkspace.checkRemoteSupport`.
+            run: async () => new CommandResult("some output", "", 0),
+        };
+        await assert.doesNotReject(
+            LocalWorkspace.create({
+                pulumiCommand: mockWithNoRemoteSupport,
+                remote: true,
+                envVars: {
+                    PULUMI_AUTOMATION_API_SKIP_VERSION_CHECK: "true",
+                },
+            }),
+        );
+    });
     it(`respects existing project settings`, async () => {
         const projectName = "correct_project";
         const stackName = fullyQualifiedStackName(getTestOrg(), projectName, `int_test${getTestSuffix()}`);
@@ -1099,100 +1260,6 @@ describe("LocalWorkspace", () => {
             assert.strictEqual(Object.keys(config).length, 20);
             await stack.workspace.removeStack(stacks[i]);
         }
-    });
-});
-
-const MAJOR = /Major version mismatch./;
-const MINIMUM = /Minimum version requirement failed./;
-const PARSE = /Failed to parse/;
-
-describe(`checkVersionIsValid`, () => {
-    const versionTests = [
-        {
-            name: "higher_major",
-            currentVersion: "100.0.0",
-            expectError: MAJOR,
-            optOut: false,
-        },
-        {
-            name: "lower_major",
-            currentVersion: "1.0.0",
-            expectError: MINIMUM,
-            optOut: false,
-        },
-        {
-            name: "higher_minor",
-            currentVersion: "v2.22.0",
-            expectError: null,
-            optOut: false,
-        },
-        {
-            name: "lower_minor",
-            currentVersion: "v2.1.0",
-            expectError: MINIMUM,
-            optOut: false,
-        },
-        {
-            name: "equal_minor_higher_patch",
-            currentVersion: "v2.21.2",
-            expectError: null,
-            optOut: false,
-        },
-        {
-            name: "equal_minor_equal_patch",
-            currentVersion: "v2.21.1",
-            expectError: null,
-            optOut: false,
-        },
-        {
-            name: "equal_minor_lower_patch",
-            currentVersion: "v2.21.0",
-            expectError: MINIMUM,
-            optOut: false,
-        },
-        {
-            name: "equal_minor_equal_patch_prerelease",
-            // Note that prerelease < release so this case will error
-            currentVersion: "v2.21.1-alpha.1234",
-            expectError: MINIMUM,
-            optOut: false,
-        },
-        {
-            name: "opt_out_of_check_would_fail_otherwise",
-            currentVersion: "v2.20.0",
-            expectError: null,
-            optOut: true,
-        },
-        {
-            name: "opt_out_of_check_would_succeed_otherwise",
-            currentVersion: "v2.22.0",
-            expectError: null,
-            optOut: true,
-        },
-        {
-            name: "invalid_version",
-            currentVersion: "invalid",
-            expectError: PARSE,
-            optOut: false,
-        },
-        {
-            name: "invalid_version_opt_out",
-            currentVersion: "invalid",
-            expectError: null,
-            optOut: true,
-        },
-    ];
-    const minVersion = new semver.SemVer("v2.21.1");
-
-    versionTests.forEach((test) => {
-        it(`validates ${test.name} (${test.currentVersion})`, () => {
-            const validate = () => parseAndValidatePulumiVersion(minVersion, test.currentVersion, test.optOut);
-            if (test.expectError) {
-                assert.throws(validate, test.expectError);
-            } else {
-                assert.doesNotThrow(validate);
-            }
-        });
     });
 });
 

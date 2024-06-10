@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pulumi/pulumi/sdk/v3/go/common/resource/plugin"
+
 	"github.com/blang/semver"
 	"github.com/hashicorp/hcl/v2"
 	"github.com/stretchr/testify/assert"
@@ -42,6 +44,7 @@ type ProgramTest struct {
 	SkipCompile        codegen.StringSet
 	BindOptions        []pcl.BindOption
 	MockPluginVersions map[string]string
+	PluginHost         plugin.Host
 }
 
 var testdataPath = filepath.Join("..", "testing", "test", "testdata")
@@ -91,6 +94,12 @@ var PulumiPulumiProgramTests = []ProgramTest{
 	{
 		Directory:   "aws-fargate",
 		Description: "AWS Fargate",
+	},
+	{
+		Directory:   "aws-static-website",
+		Description: "an example resource from AWS static website multi-language component",
+		// TODO: blocked on resolving imports (python) / using statements (C#) for types from external packages
+		SkipCompile: codegen.NewStringSet("dotnet", "python"),
 	},
 	{
 		Directory:   "aws-fargate-output-versioned",
@@ -149,8 +158,27 @@ var PulumiPulumiProgramTests = []ProgramTest{
 		//   TODO[pulumi/pulumi#8075]
 	},
 	{
+		Directory:   "azure-native-v2-eventgrid",
+		Description: "Azure Native V2 basic example to ensure that importPathPatten works",
+		// Specifically use a simplified azure-native v2.x schema when testing this program
+		// this schema only contains content from the eventgrid module which is sufficient to test with
+		PluginHost: utils.NewHostWithProviders(testdataPath,
+			utils.NewSchemaProvider("azure-native", "2.41.0")),
+	},
+	{
 		Directory:   "azure-sa",
 		Description: "Azure SA",
+	},
+	{
+		Directory:   "string-enum-union-list",
+		Description: "Contains resource which has a property of type List<Union<String, Enum>>",
+		// skipping compiling on Go because it doesn't know to handle unions in lists
+		// and instead generates pulumi.StringArray
+		SkipCompile: codegen.NewStringSet("go"),
+	},
+	{
+		Directory:   "using-object-as-input-for-any",
+		Description: "Tests using object as input for a property of type 'any'",
 	},
 	{
 		Directory:   "kubernetes-operator",
@@ -228,10 +256,9 @@ var PulumiPulumiProgramTests = []ProgramTest{
 		Skip: codegen.NewStringSet("go", "nodejs", "dotnet"),
 	},
 	{
-		Directory:   "discriminated-union",
-		Description: "Discriminated Unions for choosing an input type",
-		Skip:        codegen.NewStringSet("go"),
-		// Blocked on go: TODO[pulumi/pulumi#10834]
+		Directory:   "basic-unions",
+		Description: "Tests program generation of fields of type union",
+		SkipCompile: allProgLanguages, // because the schema is synthetic
 	},
 	{
 		Directory:   "traverse-union-repro",
@@ -268,6 +295,10 @@ var PulumiPulumiProgramTests = []ProgramTest{
 	{
 		Directory:   "retain-on-delete",
 		Description: "Generate RetainOnDelete option",
+	},
+	{
+		Directory:   "depends-on-array",
+		Description: "Using DependsOn resource option with an array of resources",
 	},
 	{
 		Directory:   "multiline-string",
@@ -604,7 +635,14 @@ func TestProgramCodegen(
 			hclFiles := map[string]*hcl.File{
 				tt.Directory + ".pp": {Body: parser.Files[0].Body, Bytes: parser.Files[0].Bytes},
 			}
-			opts := append(tt.BindOptions, pcl.PluginHost(utils.NewHost(testdataPath)))
+			var pluginHost plugin.Host
+			if tt.PluginHost != nil {
+				pluginHost = tt.PluginHost
+			} else {
+				pluginHost = utils.NewHost(testdataPath)
+			}
+
+			opts := append(tt.BindOptions, pcl.PluginHost(pluginHost))
 			rootProgramPath := filepath.Join(testdataPath, tt.Directory+"-pp")
 			absoluteProgramPath, err := filepath.Abs(rootProgramPath)
 			if err != nil {

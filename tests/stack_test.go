@@ -39,6 +39,7 @@ import (
 	"github.com/pulumi/pulumi/sdk/v3/go/common/workspace"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v2"
 )
 
 //nolint:paralleltest // mutates environment variables
@@ -324,7 +325,7 @@ func TestStackCommands(t *testing.T) {
 			Resource: res,
 			Type:     resource.OperationTypeDeleting,
 		})
-		v3deployment, err := stack.SerializeDeployment(snap, nil, false /* showSecrets */)
+		v3deployment, err := stack.SerializeDeployment(context.Background(), snap, false /* showSecrets */)
 		if !assert.NoError(t, err) {
 			t.FailNow()
 		}
@@ -366,7 +367,7 @@ func TestStackBackups(t *testing.T) {
 		e.ImportDirectory("integration/stack_outputs/nodejs")
 
 		// We're testing that backups are created so ensure backups aren't disabled.
-		disableCheckpointBackups := env.SelfManagedDisableCheckpointBackups.Var().Name()
+		disableCheckpointBackups := env.DIYBackendDisableCheckpointBackups.Var().Name()
 		if env := os.Getenv(disableCheckpointBackups); env != "" {
 			os.Unsetenv(disableCheckpointBackups)
 			defer os.Setenv(disableCheckpointBackups, env)
@@ -434,7 +435,7 @@ func TestStackBackups(t *testing.T) {
 }
 
 //nolint:paralleltest // mutates environment variables
-func TestDestroySetsEncryptedkey(t *testing.T) {
+func TestDestroySetsEncryptionsalt(t *testing.T) {
 	e := ptesting.NewEnvironment(t)
 	defer func() {
 		if !t.Failed() {
@@ -443,6 +444,8 @@ func TestDestroySetsEncryptedkey(t *testing.T) {
 	}()
 
 	const stackName = "imulup"
+	stackFile := filepath.Join(e.RootPath, "Pulumi.imulup.yaml")
+	var expectedSalt string
 
 	// Set up the environment.
 	{
@@ -462,10 +465,15 @@ func TestDestroySetsEncryptedkey(t *testing.T) {
 
 		// Now run pulumi up.
 		e.RunCommand("pulumi", "up", "--non-interactive", "--yes", "--skip-preview")
-	}
 
-	wd := e.RootPath
-	stackFile := filepath.Join(wd, "Pulumi.imulup.yaml")
+		// See what the encryptionsalt is
+		stackYAML, err := os.ReadFile(stackFile)
+		require.NoError(t, err)
+		var stackConfig workspace.ProjectStack
+		err = yaml.Unmarshal(stackYAML, &stackConfig)
+		require.NoError(t, err)
+		expectedSalt = stackConfig.EncryptionSalt
+	}
 
 	// Remove `encryptionsalt` from `Pulumi.imulup.yaml`.
 	preamble := "secretsprovider: passphrase\n"
@@ -475,11 +483,13 @@ func TestDestroySetsEncryptedkey(t *testing.T) {
 	// Now run pulumi destroy.
 	e.RunCommand("pulumi", "destroy", "--non-interactive", "--yes", "--skip-preview")
 
-	// Check that the stack file has `encryptionsalt` set.
-	data, err := os.ReadFile(stackFile)
-	assert.NoError(t, err, "reading Pulumi.imulup.yaml")
-	s := string(data)
-	assert.Contains(t, s, "encryptionsalt", "should contain encryptionsalt")
+	// Check that the stack file has the right `encryptionsalt` set.
+	stackYAML, err := os.ReadFile(stackFile)
+	require.NoError(t, err)
+	var stackConfig workspace.ProjectStack
+	err = yaml.Unmarshal(stackYAML, &stackConfig)
+	require.NoError(t, err)
+	assert.Equal(t, expectedSalt, stackConfig.EncryptionSalt)
 
 	e.RunCommand("pulumi", "stack", "rm", "--yes")
 }
@@ -682,20 +692,21 @@ func TestLocalStateGzip(t *testing.T) { //nolint:paralleltest
 	e.RunCommand("pulumi", "up", "--non-interactive", "--yes", "--skip-preview")
 
 	assertGzipFileFormat, assertPlainFileFormat := stackFileFormatAsserters(t, e, "stack_dependencies", stackName)
-	gzipEnvVar := env.SelfManagedGzip.Var().Name()
+	gzipEnvVar := env.DIYBackendGzip.Var().Name()
 	switchGzipOff := func() { e.Setenv(gzipEnvVar, "0") }
 	switchGzipOn := func() { e.Setenv(gzipEnvVar, "1") }
 	pulumiUp := func() { e.RunCommand("pulumi", "up", "--non-interactive", "--yes", "--skip-preview") }
 
 	// Test "pulumi up" with gzip compression on and off.
-	// Running "pulumi up" 2 times is important because normally, first the
-	// `.json` becomes `.json.gz`, then the `.json.bak` becomes `.json.gz.bak`.
 	// Default is no gzip compression
 	switchGzipOff()
 	assertPlainFileFormat()
 
 	// Enable Gzip compression
 	switchGzipOn()
+	pulumiUp()
+	// Running "pulumi up" 2 times is important because normally, first the
+	// `.json` becomes `.json.gz`, then the `.json.bak` becomes `.json.gz.bak`.
 	pulumiUp()
 	assertGzipFileFormat()
 
@@ -716,7 +727,7 @@ func TestLocalStateGzip(t *testing.T) { //nolint:paralleltest
 	if err := json.Unmarshal([]byte(rawHistory), &history); err != nil {
 		t.Fatalf("Can't unmarshall history json")
 	}
-	assert.Equal(t, 5, len(history), "Stack history doesn't match reality")
+	assert.Equal(t, 6, len(history), "Stack history doesn't match reality")
 }
 
 func getFileNames(infos []os.DirEntry) []string {
@@ -834,7 +845,7 @@ func TestNewStackConflictingOrg(t *testing.T) {
 	project, err := resource.NewUniqueHex("test-name-", 8, -1)
 	require.NoError(t, err)
 
-	// `new` wants to work in an empty directory but our use of local filestate means we have a
+	// `new` wants to work in an empty directory but our use of local url means we have a
 	// ".pulumi" directory at root.
 	projectDir := filepath.Join(e.RootPath, project)
 	err = os.Mkdir(projectDir, 0o700)

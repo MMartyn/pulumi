@@ -7,6 +7,7 @@ import (
 	"io"
 	"math/big"
 	"strings"
+	"unicode"
 
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
@@ -28,7 +29,8 @@ func (g *generator) lowerExpression(expr model.Expression, typ model.Type) (mode
 	// TODO(pdg): diagnostics
 
 	expr = pcl.RewritePropertyReferences(expr)
-	expr, diags := pcl.RewriteApplies(expr, nameInfo(0), false)
+	skipToJSONWhenRewritingApplies := true
+	expr, diags := pcl.RewriteAppliesWithSkipToJSON(expr, nameInfo(0), false, skipToJSONWhenRewritingApplies)
 	expr, lowerProxyDiags := g.lowerProxyApplies(expr)
 	expr, convertDiags := pcl.RewriteConversions(expr, typ)
 	expr, quotes, quoteDiags := g.rewriteQuotes(expr)
@@ -239,13 +241,19 @@ func (g *generator) GenFunctionCallExpression(w io.Writer, expr *model.FunctionC
 			}
 			var moduleNameOverrides map[string]string
 			if pkg, err := enum.(*schema.EnumType).PackageReference.Definition(); err == nil {
-				moduleNameOverrides = pkg.Language["python"].(PackageInfo).ModuleNameOverrides
+				if pkgInfo, ok := pkg.Language["python"].(PackageInfo); ok {
+					moduleNameOverrides = pkgInfo.ModuleNameOverrides
+				}
 			}
 			pkg := strings.ReplaceAll(components[0], "-", "_")
-			if m := tokenToModule(to.Token, nil, moduleNameOverrides); m != "" {
-				pkg += "." + m
-			}
 			enumName := tokenToName(to.Token)
+			if m := tokenToModule(to.Token, nil, moduleNameOverrides); m != "" {
+				modParts := strings.Split(m, "/")
+				if len(modParts) == 2 && strings.EqualFold(modParts[1], enumName) {
+					m = modParts[0]
+				}
+				pkg += "." + strings.ReplaceAll(m, "/", ".")
+			}
 
 			if isOutput {
 				g.Fgenf(w, "%.v.apply(lambda x: %s.%s(x))", from, pkg, enumName)
@@ -404,7 +412,11 @@ func (g *generator) GenFunctionCallExpression(w io.Writer, expr *model.FunctionC
 	case "fromBase64":
 		g.Fgenf(w, "base64.b64decode(%.16v.encode()).decode()", expr.Args[0])
 	case "toJSON":
-		g.Fgenf(w, "json.dumps(%.v)", expr.Args[0])
+		if model.ContainsOutputs(expr.Args[0].Type()) {
+			g.Fgenf(w, "pulumi.Output.json_dumps(%.v)", expr.Args[0])
+		} else {
+			g.Fgenf(w, "json.dumps(%.v)", expr.Args[0])
+		}
 	case "sha1":
 		g.Fgenf(w, "hashlib.sha1(%v.encode()).hexdigest()", expr.Args[0])
 	case "project":
@@ -413,6 +425,8 @@ func (g *generator) GenFunctionCallExpression(w io.Writer, expr *model.FunctionC
 		g.Fgen(w, "pulumi.get_stack()")
 	case "cwd":
 		g.Fgen(w, "os.getcwd()")
+	case "getOutput":
+		g.Fgenf(w, "%v.get_output(%v)", expr.Args[0], expr.Args[1])
 	default:
 		var rng hcl.Range
 		if expr.Syntax != nil {
@@ -430,6 +444,15 @@ type runeWriter interface {
 	WriteRune(c rune) (int, error)
 }
 
+func escapeRune(c rune) string {
+	if c < 0xFF {
+		return fmt.Sprintf("\\x%02x", c)
+	} else if c < 0xFFFF {
+		return fmt.Sprintf("\\u%04x", c)
+	}
+	return fmt.Sprintf("\\U%08x", c)
+}
+
 //nolint:errcheck
 func (g *generator) genEscapedString(w runeWriter, v string, escapeNewlines, escapeBraces bool) {
 	for _, c := range v {
@@ -437,18 +460,35 @@ func (g *generator) genEscapedString(w runeWriter, v string, escapeNewlines, esc
 		case '\n':
 			if escapeNewlines {
 				w.WriteRune('\\')
-				c = 'n'
+				w.WriteRune('n')
+			} else {
+				w.WriteRune(c)
 			}
+			continue
 		case '"', '\\':
 			if escapeNewlines {
 				w.WriteRune('\\')
+				w.WriteRune(c)
+				continue
 			}
 		case '{', '}':
 			if escapeBraces {
 				w.WriteRune(c)
+				w.WriteRune(c)
+				continue
 			}
 		}
-		w.WriteRune(c)
+
+		if unicode.IsPrint(c) {
+			w.WriteRune(c)
+			continue
+		}
+
+		// This is a non-printable character. We'll emit a Python escape sequence for it.
+		codepoint := escapeRune(c)
+		for _, r := range codepoint {
+			w.WriteRune(r)
+		}
 	}
 }
 

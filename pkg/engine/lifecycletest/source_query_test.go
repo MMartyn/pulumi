@@ -47,10 +47,10 @@ func TestRunQuery_nocreate(t *testing.T) {
 	}
 
 	programF := deploytest.NewLanguageRuntimeF(func(_ plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
-		_, _, _, err := monitor.RegisterResource(providers.MakeProviderType("pkgA"), "provA", true)
+		_, err := monitor.RegisterResource(providers.MakeProviderType("pkgA"), "provA", true)
 		assert.ErrorContains(t, err, "Query mode does not support creating, updating, or deleting resources")
 
-		_, _, _, err = monitor.RegisterResource("pkgA:m:typA", "resA", true, deploytest.ResourceOptions{})
+		_, err = monitor.RegisterResource("pkgA:m:typA", "resA", true, deploytest.ResourceOptions{})
 		assert.ErrorContains(t, err, "Query mode does not support creating, updating, or deleting resources")
 
 		_, _, err = monitor.ReadResource("pkgA:m:typA", "resA", "read-id", "", nil, "", "", "")
@@ -65,6 +65,9 @@ func TestRunQuery_nocreate(t *testing.T) {
 	assert.NoError(t, err)
 
 	src, err := deploy.NewQuerySource(context.Background(), plugCtx, &deploytest.BackendClient{}, &deploy.EvalRunInfo{
+		ProjectRoot: "/",
+		Pwd:         "/",
+		Program:     ".",
 		Proj: &workspace.Project{
 			Name: "query-program",
 		},
@@ -113,7 +116,7 @@ func TestRunQuery_call_invoke(t *testing.T) {
 	programF := deploytest.NewLanguageRuntimeF(func(_ plugin.RunInfo, monitor *deploytest.ResourceMonitor) error {
 		outs, _, _, err := monitor.Call("pkgA:m:typA/methodA", resource.PropertyMap{
 			"name": resource.NewStringProperty("bar"),
-		}, "", "")
+		}, nil, "", "")
 		assert.NoError(t, err)
 		assert.Equal(t, (resource.PropertyMap{
 			"message": resource.NewStringProperty("Hello, bar!"),
@@ -137,6 +140,9 @@ func TestRunQuery_call_invoke(t *testing.T) {
 	require.NoError(t, err)
 
 	src, err := deploy.NewQuerySource(context.Background(), plugCtx, &deploytest.BackendClient{}, &deploy.EvalRunInfo{
+		ProjectRoot: "/",
+		Pwd:         "/",
+		Program:     ".",
 		Proj: &workspace.Project{
 			Name: "query-program",
 		},

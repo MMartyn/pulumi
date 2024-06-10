@@ -42,6 +42,29 @@ export namespace ProgramInfo {
     }
 }
 
+export class AboutRequest extends jspb.Message { 
+
+    hasInfo(): boolean;
+    clearInfo(): void;
+    getInfo(): ProgramInfo | undefined;
+    setInfo(value?: ProgramInfo): AboutRequest;
+
+    serializeBinary(): Uint8Array;
+    toObject(includeInstance?: boolean): AboutRequest.AsObject;
+    static toObject(includeInstance: boolean, msg: AboutRequest): AboutRequest.AsObject;
+    static extensions: {[key: number]: jspb.ExtensionFieldInfo<jspb.Message>};
+    static extensionsBinary: {[key: number]: jspb.ExtensionFieldBinaryInfo<jspb.Message>};
+    static serializeBinaryToWriter(message: AboutRequest, writer: jspb.BinaryWriter): void;
+    static deserializeBinary(bytes: Uint8Array): AboutRequest;
+    static deserializeBinaryFromReader(message: AboutRequest, reader: jspb.BinaryReader): AboutRequest;
+}
+
+export namespace AboutRequest {
+    export type AsObject = {
+        info?: ProgramInfo.AsObject,
+    }
+}
+
 export class AboutResponse extends jspb.Message { 
     getExecutable(): string;
     setExecutable(value: string): AboutResponse;
@@ -564,6 +587,9 @@ export class GeneratePackageRequest extends jspb.Message {
     getLoaderTarget(): string;
     setLoaderTarget(value: string): GeneratePackageRequest;
 
+    getLocalDependenciesMap(): jspb.Map<string, string>;
+    clearLocalDependenciesMap(): void;
+
     serializeBinary(): Uint8Array;
     toObject(includeInstance?: boolean): GeneratePackageRequest.AsObject;
     static toObject(includeInstance: boolean, msg: GeneratePackageRequest): GeneratePackageRequest.AsObject;
@@ -581,6 +607,8 @@ export namespace GeneratePackageRequest {
 
         extraFilesMap: Array<[string, Uint8Array | string]>,
         loaderTarget: string,
+
+        localDependenciesMap: Array<[string, string]>,
     }
 }
 
@@ -609,8 +637,6 @@ export namespace GeneratePackageResponse {
 export class PackRequest extends jspb.Message { 
     getPackageDirectory(): string;
     setPackageDirectory(value: string): PackRequest;
-    getVersion(): string;
-    setVersion(value: string): PackRequest;
     getDestinationDirectory(): string;
     setDestinationDirectory(value: string): PackRequest;
 
@@ -627,7 +653,6 @@ export class PackRequest extends jspb.Message {
 export namespace PackRequest {
     export type AsObject = {
         packageDirectory: string,
-        version: string,
         destinationDirectory: string,
     }
 }

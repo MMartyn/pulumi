@@ -17,7 +17,6 @@ package deploytest
 import (
 	"testing"
 
-	"github.com/blang/semver"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource/plugin"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/workspace"
 	"github.com/stretchr/testify/assert"
@@ -45,7 +44,7 @@ func TestLanguageRuntime(t *testing.T) {
 		t.Run("GetRequiredPlugins", func(t *testing.T) {
 			t.Parallel()
 			p := &languageRuntime{closed: true}
-			_, err := p.GetRequiredPlugins(plugin.ProgInfo{})
+			_, err := p.GetRequiredPlugins(plugin.ProgramInfo{})
 			assert.ErrorIs(t, err, ErrLanguageRuntimeIsClosed)
 		})
 		t.Run("GetPluginInfo", func(t *testing.T) {
@@ -57,19 +56,19 @@ func TestLanguageRuntime(t *testing.T) {
 		t.Run("InstallDependencies", func(t *testing.T) {
 			t.Parallel()
 			p := &languageRuntime{closed: true}
-			err := p.InstallDependencies("", "")
+			err := p.InstallDependencies(plugin.ProgramInfo{})
 			assert.ErrorIs(t, err, ErrLanguageRuntimeIsClosed)
 		})
 		t.Run("About", func(t *testing.T) {
 			t.Parallel()
 			p := &languageRuntime{closed: true}
-			_, err := p.About()
+			_, err := p.About(plugin.ProgramInfo{})
 			assert.ErrorIs(t, err, ErrLanguageRuntimeIsClosed)
 		})
 		t.Run("GetProgramDependencies", func(t *testing.T) {
 			t.Parallel()
 			p := &languageRuntime{closed: true}
-			_, err := p.GetProgramDependencies(plugin.ProgInfo{}, false)
+			_, err := p.GetProgramDependencies(plugin.ProgramInfo{}, false)
 			assert.ErrorIs(t, err, ErrLanguageRuntimeIsClosed)
 		})
 	})
@@ -94,19 +93,19 @@ func TestLanguageRuntime(t *testing.T) {
 		t.Run("InstallDependencies", func(t *testing.T) {
 			t.Parallel()
 			p := &languageRuntime{}
-			assert.NoError(t, p.InstallDependencies("", ""))
+			assert.NoError(t, p.InstallDependencies(plugin.ProgramInfo{}))
 		})
 		t.Run("About", func(t *testing.T) {
 			t.Parallel()
 			p := &languageRuntime{}
-			about, err := p.About()
+			about, err := p.About(plugin.ProgramInfo{})
 			assert.NoError(t, err)
 			assert.Equal(t, plugin.AboutInfo{}, about)
 		})
 		t.Run("GetProgramDependencies", func(t *testing.T) {
 			t.Parallel()
 			p := &languageRuntime{}
-			res, err := p.GetProgramDependencies(plugin.ProgInfo{}, false)
+			res, err := p.GetProgramDependencies(plugin.ProgramInfo{}, false)
 			assert.NoError(t, err)
 			assert.Nil(t, res)
 		})
@@ -125,7 +124,7 @@ func TestLanguageRuntime(t *testing.T) {
 		})
 		t.Run("GeneratePackage", func(t *testing.T) {
 			t.Parallel()
-			_, err := p.GeneratePackage("", "", nil, "")
+			_, err := p.GeneratePackage("", "", nil, "", nil)
 			assert.ErrorContains(t, err, "is not supported")
 		})
 		t.Run("GenerateProgram", func(t *testing.T) {
@@ -135,7 +134,7 @@ func TestLanguageRuntime(t *testing.T) {
 		})
 		t.Run("Pack", func(t *testing.T) {
 			t.Parallel()
-			_, err := p.Pack("", semver.Version{}, "")
+			_, err := p.Pack("", "")
 			assert.ErrorContains(t, err, "is not supported")
 		})
 	})

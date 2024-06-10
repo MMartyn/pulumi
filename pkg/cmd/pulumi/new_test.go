@@ -27,6 +27,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/pulumi/pulumi/pkg/v3/backend"
 	"github.com/pulumi/pulumi/pkg/v3/backend/display"
+	"github.com/pulumi/pulumi/sdk/v3/go/common/apitype"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource/config"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/tokens"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/workspace"
@@ -430,6 +431,7 @@ func TestInvalidTemplateName(t *testing.T) {
 		chdir(t, tempdir)
 
 		args := newArgs{
+			chooseTemplate:    chooseTemplate,
 			interactive:       false,
 			yes:               true,
 			secretsProvider:   "default",
@@ -1049,4 +1051,97 @@ func TestPulumiNewConflictingProject(t *testing.T) {
 			},
 		))
 	assert.Truef(t, called, "expected resolution to be called with duplicate name")
+}
+
+//nolint:paralleltest // changes directory for process
+func TestPulumiNewSetsTemplateTag(t *testing.T) {
+	tests := []struct {
+		argument string
+		prompted string
+		expected string
+	}{
+		{
+			"typescript",
+			"",
+			"typescript",
+		},
+		{
+			"https://github.com/pulumi/templates/tree/master/yaml?foo=bar",
+			"",
+			"https://github.com/pulumi/templates/tree/master/yaml",
+		},
+		{
+			"",
+			"python",
+			"python",
+		},
+	}
+	for _, tt := range tests {
+		tt := tt
+		name := tt.argument
+		if name == "" {
+			name = tt.prompted
+		}
+		t.Run(name, func(t *testing.T) {
+			tempdir := tempProjectDir(t)
+			chdir(t, tempdir)
+			uniqueProjectName := filepath.Base(tempdir) + "test"
+
+			chooseTemplateMock := func(templates []workspace.Template, opts display.Options,
+			) (workspace.Template, error) {
+				for _, template := range templates {
+					if template.Name == tt.prompted {
+						return template, nil
+					}
+				}
+				return workspace.Template{}, errors.New("template not found")
+			}
+
+			args := newArgs{
+				interactive:       tt.prompted != "",
+				generateOnly:      true,
+				yes:               true,
+				templateMode:      true,
+				name:              projectName,
+				prompt:            promptMock(uniqueProjectName, stackName),
+				chooseTemplate:    chooseTemplateMock,
+				secretsProvider:   "default",
+				templateNameOrURL: tt.argument,
+			}
+
+			err := runNew(context.Background(), args)
+			assert.NoError(t, err)
+
+			proj := loadProject(t, tempdir)
+			require.NoError(t, err)
+			tagsValue, has := proj.Config[apitype.PulumiTagsConfigKey]
+			assert.True(t, has)
+			tagsObject, ok := tagsValue.Value.(map[string]interface{})
+			assert.True(t, ok)
+			assert.Equal(t, tt.expected, tagsObject[apitype.ProjectTemplateTag])
+		})
+	}
+}
+
+func TestSanitizeTemplate(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"https://user:pass@example.com/path?param=value", "https://example.com/path"},
+		{"https://user:pass@example.com", "https://example.com"},
+		{"https://example.com/path?param=value", "https://example.com/path"},
+		{"ssh://user@hostname/project/repo", "ssh://hostname/project/repo"},
+		{"typescript", "typescript"},
+		{"aws-typescript", "aws-typescript"},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.input, func(t *testing.T) {
+			t.Parallel()
+			result := sanitizeTemplate(tt.input)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
 }

@@ -39,6 +39,7 @@ from typing import (
 from . import _types, runtime
 from .runtime import rpc
 from .runtime.sync_await import _sync_await
+from .runtime.settings import SETTINGS
 
 if TYPE_CHECKING:
     from .resource import Resource
@@ -99,6 +100,23 @@ class Output(Generic[T_co]):
     ) -> None:
         is_known = asyncio.ensure_future(is_known)
         future = asyncio.ensure_future(future)
+        # keep track of all created outputs so we can check they resolve
+        with SETTINGS.lock:
+            SETTINGS.outputs.append(future)
+
+        def cleanup(fut: "asyncio.Future[T_co]") -> None:
+            if fut.cancelled() or (fut.exception() is not None):
+                # if cancelled or error'd leave it in the deque to pick up at program exit
+                return
+            # else remove it from the deque
+            with SETTINGS.lock:
+                try:
+                    SETTINGS.outputs.remove(fut)
+                except ValueError:
+                    # if it's not in the deque then it's already been removed in wait_for_rpcs
+                    pass
+
+        future.add_done_callback(cleanup)
 
         async def is_value_known() -> bool:
             return await is_known and not contains_unknowns(await future)
@@ -140,7 +158,7 @@ class Output(Generic[T_co]):
         return self._is_secret
 
     def apply(
-        self, func: Callable[[T_co], Input[U]], run_with_unknowns: Optional[bool] = None
+        self, func: Callable[[T_co], Input[U]], run_with_unknowns: bool = False
     ) -> "Output[U]":
         """
         Transforms the data of the output with the provided func.  The result remains an
@@ -151,8 +169,8 @@ class Output(Generic[T_co]):
         'func' can return other Outputs.  This can be handy if you have a Output<SomeVal>
         and you want to get a transitive dependency of it.
 
-        This function will be called during execution of a `pulumi up` request.  It may not run
-        during `pulumi preview` (as the values of resources are of course may not be known then).
+        This function will be called during execution of a `pulumi up` or `pulumi preview` request.
+        It may not run when the values of the resource is unknown.
 
         :param Callable[[T_co],Input[U]] func: A function that will, given this Output's value, transform the value to
                an Input of some kind, where an Input is either a prompt value, a Future, or another Output of the given
@@ -174,28 +192,22 @@ class Output(Generic[T_co]):
                 is_secret = await self._is_secret
                 value = await self._future
 
-                if runtime.is_dry_run():
-                    # During previews only perform the apply if the engine was able to give us an actual value for this
-                    # Output or if the caller is able to tolerate unknown values.
-                    apply_during_preview = is_known or run_with_unknowns
+                # Only perform the apply if the engine was able to give us an actual value for this
+                # Output or if the caller is able to tolerate unknown values.
+                do_apply = is_known or run_with_unknowns
+                if not do_apply:
+                    # We didn't actually run the function, our new Output is definitely
+                    # **not** known.
+                    result_resources.set_result(resources)
+                    result_is_known.set_result(False)
+                    result_is_secret.set_result(is_secret)
+                    return cast(U, None)
 
-                    if not apply_during_preview:
-                        # We didn't actually run the function, our new Output is definitely
-                        # **not** known.
-                        result_resources.set_result(resources)
-                        result_is_known.set_result(False)
-                        result_is_secret.set_result(is_secret)
-                        return cast(U, None)
-
-                    # If we are running with unknown values and the value is explicitly unknown but does not actually
-                    # contain any unknown values, collapse its value to the unknown value. This ensures that callbacks
-                    # that expect to see unknowns during preview in outputs that are not known will always do so.
-                    if (
-                        not is_known
-                        and run_with_unknowns
-                        and not contains_unknowns(value)
-                    ):
-                        value = cast(T_co, UNKNOWN)
+                # If we are running with unknown values and the value is explicitly unknown but does not actually
+                # contain any unknown values, collapse its value to the unknown value. This ensures that callbacks
+                # that expect to see unknowns during preview in outputs that are not known will always do so.
+                if not is_known and run_with_unknowns and not contains_unknowns(value):
+                    value = cast(T_co, UNKNOWN)
 
                 transformed: Input[U] = func(value)
                 # Transformed is an Input, meaning there are three cases:
@@ -209,7 +221,10 @@ class Output(Generic[T_co]):
                     result_is_secret.set_result(
                         await transformed_as_output._is_secret or is_secret
                     )
-                    return await transformed.future(with_unknowns=True)
+                    result = await transformed_as_output.future(with_unknowns=True)
+                    # future shouldn't return None because we passed with_unknowns=True, but we can't RTTI check that
+                    # because the U value itself might be None.
+                    return cast(U, result)
 
                 #  2. transformed is an Awaitable[U]
                 if isawaitable(transformed):
@@ -274,15 +289,23 @@ class Output(Generic[T_co]):
             "'Output' object is not iterable, consider iterating the underlying value inside an 'apply'"
         )
 
+    @overload
     @staticmethod
-    def from_input(val: Input[T_co]) -> "Output[T_co]":
+    def from_input(val: "Output[U]") -> "Output[U]": ...
+
+    @overload
+    @staticmethod
+    def from_input(val: Input[U]) -> "Output[U]": ...
+
+    @staticmethod
+    def from_input(val: Input[U]) -> "Output[U]":
         """
         Takes an Input value and produces an Output value from it, deeply unwrapping nested Input values through nested
         lists, dicts, and input classes.  Nested objects of other types (including Resources) are not deeply unwrapped.
 
-        :param Input[T_co] val: An Input to be converted to an Output.
+        :param Input[U] val: An Input to be converted to an Output.
         :return: A deeply-unwrapped Output that is guaranteed to not contain any Input values.
-        :rtype: Output[T_co]
+        :rtype: Output[U]
         """
 
         # Is it an output already? Recurse into the value contained within it.
@@ -300,11 +323,9 @@ class Output(Generic[T_co]):
                 # this. If we get an empty list we can't splat it as that results in a type error, so check
                 # that we have some values before splatting. If it's empty just call the `typ` constructor
                 # directly with no arguments.
-                lambda d: typ(**d)
-                if d
-                else typ()
+                lambda d: typ(**d) if d else typ()
             )
-            return cast(Output[T_co], o_typ)
+            return cast(Output[U], o_typ)
 
         # Is a (non-empty) dict, list, or tuple? Recurse into the values within them.
         if val and isinstance(val, dict):
@@ -319,17 +340,17 @@ class Output(Generic[T_co]):
                 return Output.all(**d)
 
             o_dict: Output[dict] = Output.all(*keys).apply(liftValues)
-            return cast(Output[T_co], o_dict)
+            return cast(Output[U], o_dict)
 
         if val and isinstance(val, list):
             o_list: Output[list] = Output.all(*val)
-            return cast(Output[T_co], o_list)
+            return cast(Output[U], o_list)
 
         if val and isinstance(val, tuple):
             # We can splat a tuple into all, but we'll always get back a list...
             o_list = Output.all(*val)
             # ...so we need to convert back to a tuple.
-            return cast(Output[T_co], o_list.apply(tuple))
+            return cast(Output[U], o_list.apply(tuple))
 
         # If it's not an output, tuple, list, or dict, it must be known and not secret
         is_known_fut: asyncio.Future[bool] = asyncio.Future()
@@ -352,7 +373,7 @@ class Output(Generic[T_co]):
         return Output(set(), value_fut, is_known_fut, is_secret_fut)
 
     @staticmethod
-    def _from_input_shallow(val: Input[T]) -> "Output[T]":
+    def _from_input_shallow(val: Input[U]) -> "Output[U]":
         """
         Like `from_input`, but does not recur deeply. Instead, checks if `val` is an `Output` value
         and returns it as is. Otherwise, promotes a known value or future to `Output`.
@@ -383,7 +404,7 @@ class Output(Generic[T_co]):
         return Output(set(), value_fut, is_known_fut, is_secret_fut)
 
     @staticmethod
-    def unsecret(val: "Output[T]") -> "Output[T]":
+    def unsecret(val: "Output[U]") -> "Output[U]":
         """
         Takes an existing Output, deeply unwraps the nested values and returns a new Output without any secrets included
 
@@ -396,7 +417,7 @@ class Output(Generic[T_co]):
         return Output(val._resources, val._future, val._is_known, is_secret)
 
     @staticmethod
-    def secret(val: Input[T]) -> "Output[T]":
+    def secret(val: Input[U]) -> "Output[U]":
         """
         Takes an Input value and produces an Output value from it, deeply unwrapping nested Input values as necessary
         given the type. It also marks the returned Output as a secret, so its contents will be persisted in an encrypted
@@ -416,16 +437,24 @@ class Output(Generic[T_co]):
     # https://mypy.readthedocs.io/en/stable/more_types.html#type-checking-the-variants:~:text=considered%20unsafely%20overlapping
     @overload
     @staticmethod
-    def all(*args: Input[T]) -> "Output[List[T]]":  # type: ignore
-        ...
+    def all(*args: "Output[Any]") -> "Output[List[Any]]": ...  # type: ignore
 
     @overload
     @staticmethod
-    def all(**kwargs: Input[T]) -> "Output[Dict[str, T]]":
-        ...
+    def all(**kwargs: "Output[Any]") -> "Output[Dict[str, Any]]": ...  # type: ignore
+
+    @overload
+    @staticmethod
+    def all(*args: Input[Any]) -> "Output[List[Any]]": ...  # type: ignore
+
+    @overload
+    @staticmethod
+    def all(**kwargs: Input[Any]) -> "Output[Dict[str, Any]]": ...  # type: ignore
 
     @staticmethod
-    def all(*args: Input[T], **kwargs: Input[T]):
+    def all(
+        *args: Input[Any], **kwargs: Input[Any]
+    ) -> "Output[list[Any] | dict[str, Any]]":
         """
         Produces an Output of a list (if args i.e a list of inputs are supplied)
         or dict (if kwargs i.e. keyworded arguments are supplied).
@@ -478,19 +507,15 @@ class Output(Generic[T_co]):
             }
             return await _gather_from_dict(value_futures_dict)
 
-        from_input = cast(
-            Callable[[Union[T, Awaitable[T], Output[T]]], Output[T]], Output.from_input
-        )
-
         if args and kwargs:
             raise ValueError(
                 "Output.all() was supplied a mix of named and unnamed inputs"
             )
         # First, map all inputs to outputs using `from_input`.
         all_outputs: Union[list, dict] = (
-            {k: from_input(v) for k, v in kwargs.items()}
+            {k: Output.from_input(v) for k, v in kwargs.items()}
             if kwargs
-            else [from_input(x) for x in args]
+            else [Output.from_input(x) for x in args]
         )
 
         # Aggregate the list or dict of futures into a future of list or dict.

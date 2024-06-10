@@ -234,7 +234,7 @@ type serviceTokenInfo struct {
 	Team         string `json:"team,omitempty"`
 }
 
-// GetPulumiAccountName returns the user implied by the API token associated with this client.
+// GetPulumiAccountDetails returns the user implied by the API token associated with this client.
 func (pc *Client) GetPulumiAccountDetails(ctx context.Context) (string, []string, *workspace.TokenInformation, error) {
 	if pc.apiUser == "" {
 		resp := serviceUser{}
@@ -472,7 +472,10 @@ func isStackHasResourcesError(err error) bool {
 func (pc *Client) EncryptValue(ctx context.Context, stack StackIdentifier, plaintext []byte) ([]byte, error) {
 	req := apitype.EncryptValueRequest{Plaintext: plaintext}
 	var resp apitype.EncryptValueResponse
-	if err := pc.restCall(ctx, "POST", getStackPath(stack, "encrypt"), nil, &req, &resp); err != nil {
+	if err := pc.restCallWithOptions(
+		ctx, "POST", getStackPath(stack, "encrypt"), nil, &req, &resp,
+		httpCallOptions{RetryPolicy: retryAllMethods},
+	); err != nil {
 		return nil, err
 	}
 	return resp.Ciphertext, nil
@@ -482,7 +485,10 @@ func (pc *Client) EncryptValue(ctx context.Context, stack StackIdentifier, plain
 func (pc *Client) DecryptValue(ctx context.Context, stack StackIdentifier, ciphertext []byte) ([]byte, error) {
 	req := apitype.DecryptValueRequest{Ciphertext: ciphertext}
 	var resp apitype.DecryptValueResponse
-	if err := pc.restCall(ctx, "POST", getStackPath(stack, "decrypt"), nil, &req, &resp); err != nil {
+	if err := pc.restCallWithOptions(
+		ctx, "POST", getStackPath(stack, "decrypt"), nil, &req, &resp,
+		httpCallOptions{RetryPolicy: retryAllMethods},
+	); err != nil {
 		return nil, err
 	}
 	return resp.Plaintext, nil
@@ -513,7 +519,7 @@ func (pc *Client) BulkDecryptValue(ctx context.Context, stack StackIdentifier,
 	req := apitype.BulkDecryptValueRequest{Ciphertexts: ciphertexts}
 	var resp apitype.BulkDecryptValueResponse
 	if err := pc.restCallWithOptions(ctx, "POST", getStackPath(stack, "batch-decrypt"), nil, &req, &resp,
-		httpCallOptions{GzipCompress: true}); err != nil {
+		httpCallOptions{GzipCompress: true, RetryPolicy: retryAllMethods}); err != nil {
 		return nil, err
 	}
 
@@ -642,8 +648,8 @@ func (pc *Client) CreateUpdate(
 		endpoint = "refresh"
 	case apitype.DestroyUpdate:
 		endpoint = "destroy"
-	case apitype.StackImportUpdate:
-		contract.Failf("Stack import updates are not supported")
+	case apitype.StackImportUpdate, apitype.RenameUpdate:
+		contract.Failf("%s updates are not supported", kind)
 	default:
 		contract.Failf("Unknown kind: %s", kind)
 	}
@@ -946,6 +952,10 @@ func (pc *Client) DownloadPolicyPack(ctx context.Context, url string) (io.ReadCl
 		return nil, fmt.Errorf("Failed to download compressed PolicyPack: %w", err)
 	}
 
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("Failed to download compressed PolicyPack: %s", resp.Status)
+	}
+
 	return resp.Body, nil
 }
 
@@ -1122,15 +1132,19 @@ func (pc *Client) UpdateStackTags(
 }
 
 func getDeploymentPath(stack StackIdentifier, components ...string) string {
-	prefix := fmt.Sprintf("/api/preview/%s/%s/%s/deployments", stack.Owner, stack.Project, stack.Stack)
+	prefix := fmt.Sprintf("/api/stacks/%s/%s/%s/deployments", stack.Owner, stack.Project, stack.Stack)
 	return path.Join(append([]string{prefix}, components...)...)
 }
 
 func (pc *Client) CreateDeployment(ctx context.Context, stack StackIdentifier,
-	req apitype.CreateDeploymentRequest,
+	req apitype.CreateDeploymentRequest, deploymentInitiator string,
 ) (*apitype.CreateDeploymentResponse, error) {
 	var resp apitype.CreateDeploymentResponse
-	err := pc.restCall(ctx, http.MethodPost, getDeploymentPath(stack), nil, req, &resp)
+	err := pc.restCallWithOptions(ctx, http.MethodPost, getDeploymentPath(stack), nil, req, &resp, httpCallOptions{
+		Header: map[string][]string{
+			"X-Pulumi-Deployment-Initiator": {deploymentInitiator},
+		},
+	})
 	if err != nil {
 		return nil, fmt.Errorf("creating deployment failed: %w", err)
 	}

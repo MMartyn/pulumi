@@ -15,6 +15,10 @@ type SchemaProvider struct {
 	version string
 }
 
+func NewSchemaProvider(name, version string) SchemaProvider {
+	return SchemaProvider{name, version}
+}
+
 // NewHost creates a schema-only plugin host, supporting multiple package versions in tests. This
 // enables running tests offline. If this host is used to load a plugin, that is, to run a Pulumi
 // program, it will panic.
@@ -67,7 +71,7 @@ func NewHost(schemaDirectoryPath string) plugin.Host {
 		SchemaProvider{"eks", "0.37.1"},
 		SchemaProvider{"google-native", "0.18.2"},
 		SchemaProvider{"google-native", "0.27.0"},
-		SchemaProvider{"aws-native", "0.13.0"},
+		SchemaProvider{"aws-native", "0.99.0"},
 		SchemaProvider{"docker", "3.1.0"},
 		SchemaProvider{"std", "1.0.0"},
 		// PCL examples in 'testing/test/testdata/transpiled_examples require these versions
@@ -82,6 +86,7 @@ func NewHost(schemaDirectoryPath string) plugin.Host {
 
 		SchemaProvider{"other", "0.1.0"},
 		SchemaProvider{"synthetic", "1.0.0"},
+		SchemaProvider{"basic-unions", "0.1.0"},
 		SchemaProvider{"range", "1.0.0"},
 		SchemaProvider{"lambda", "0.1.0"},
 		SchemaProvider{"remoteref", "1.0.0"},
@@ -92,5 +97,7 @@ func NewHost(schemaDirectoryPath string) plugin.Host {
 		SchemaProvider{"localref", "1.0.0"},
 		SchemaProvider{"enum", "1.0.0"},
 		SchemaProvider{"plain-properties", "1.0.0"},
+		SchemaProvider{"recursive", "1.0.0"},
+		SchemaProvider{"aws-static-website", "0.4.0"},
 	)
 }

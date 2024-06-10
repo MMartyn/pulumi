@@ -56,10 +56,11 @@ type Options struct {
 	Stdout                 io.Writer           // the writer to use for stdout. Defaults to os.Stdout if unset.
 	Stderr                 io.Writer           // the writer to use for stderr. Defaults to os.Stderr if unset.
 	SuppressTimings        bool                // true to suppress displaying timings of resource actions
+	SuppressProgress       bool                // true to suppress displaying progress spinner.
 
 	// testing-only options
 	term                terminal.Terminal
-	deterministicOutput bool
+	DeterministicOutput bool
 }
 
 func (opts Options) WithIsInteractive(isInteractive bool) Options {

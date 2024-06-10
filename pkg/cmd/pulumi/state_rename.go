@@ -82,6 +82,11 @@ func stateReurnOperation(
 				existingResource.PropertyDependencies[property] = updateDependencies(dependencies, oldURN, newURN)
 			}
 
+			// Update deleted with relationships, if any.
+			if existingResource.DeletedWith == oldURN {
+				existingResource.DeletedWith = newURN
+			}
+
 			// Update parent, if any.
 			if existingResource.Parent == oldURN {
 				existingResource.Parent = newURN
@@ -166,7 +171,7 @@ To see the list of URNs in a stack, use ` + "`pulumi stack --show-urns`" + `.
 		Example: "pulumi state rename 'urn:pulumi:stage::demo::eks:index:Cluster$pulumi:providers:kubernetes::eks-provider' new-name-here",
 		Args:    cmdutil.MaximumNArgs(2),
 		Run: cmdutil.RunFunc(func(cmd *cobra.Command, args []string) error {
-			ctx := commandContext()
+			ctx := cmd.Context()
 			yes = yes || skipConfirmations()
 
 			if len(args) < 2 && !cmdutil.Interactive() {

@@ -44,6 +44,13 @@ import (
 // buildImportFile takes an event stream from the engine and builds an import file from it for every create.
 func buildImportFile(events <-chan engine.Event) *promise.Promise[importFile] {
 	return promise.Run(func() (importFile, error) {
+		// We may exit the below loop early if we encounter an error, so we need to make sure we drain the events
+		// channel.
+		defer func() {
+			for range events {
+			}
+		}()
+
 		// A mapping of every URN we see to it's name, used to build later resourceSpecs
 		fullNameTable := map[resource.URN]string{}
 		// A set of all URNs we've added to the import list, used to avoid adding parents to NameTable.
@@ -257,6 +264,7 @@ func newPreviewCmd() *cobra.Command {
 	var showSames bool
 	var showReads bool
 	var suppressOutputs bool
+	var suppressProgress bool
 	var suppressPermalink string
 	var targets []string
 	var replaces []string
@@ -286,7 +294,7 @@ func newPreviewCmd() *cobra.Command {
 			"`--cwd` flag to use a different directory.",
 		Args: cmdArgs,
 		Run: cmdutil.RunResultFunc(func(cmd *cobra.Command, args []string) result.Result {
-			ctx := commandContext()
+			ctx := cmd.Context()
 			displayType := display.DisplayProgress
 			if diffDisplay {
 				displayType = display.DisplayDiff
@@ -300,6 +308,7 @@ func newPreviewCmd() *cobra.Command {
 				ShowSameResources:      showSames,
 				ShowReads:              showReads,
 				SuppressOutputs:        suppressOutputs,
+				SuppressProgress:       suppressProgress,
 				IsInteractive:          cmdutil.Interactive(),
 				Type:                   displayType,
 				JSONDisplay:            jsonDisplay,
@@ -316,10 +325,6 @@ func newPreviewCmd() *cobra.Command {
 			}
 
 			if remoteArgs.remote {
-				if len(args) == 0 {
-					return result.FromError(errors.New("must specify remote URL"))
-				}
-
 				err := validateUnsupportedRemoteFlags(expectNop, configArray, configPath, client, jsonDisplay,
 					policyPackPaths, policyPackConfigPaths, refresh, showConfig, showPolicyRemediations,
 					showReplacementSteps, showSames, showReads, suppressOutputs, "default", &targets, replaces,
@@ -328,17 +333,22 @@ func newPreviewCmd() *cobra.Command {
 					return result.FromError(err)
 				}
 
-				return runDeployment(ctx, displayOpts, apitype.Preview, stackName, args[0], remoteArgs)
+				var url string
+				if len(args) > 0 {
+					url = args[0]
+				}
+
+				return runDeployment(ctx, displayOpts, apitype.Preview, stackName, url, remoteArgs)
 			}
 
-			filestateBackend, err := isFilestateBackend(displayOpts)
+			isDIYBackend, err := isDIYBackend(displayOpts)
 			if err != nil {
 				return result.FromError(err)
 			}
 
-			// by default, we are going to suppress the permalink when using self-managed backends
+			// by default, we are going to suppress the permalink when using DIY backends
 			// this can be re-enabled by explicitly passing "false" to the `suppress-permalink` flag
-			if suppressPermalink != "false" && filestateBackend {
+			if suppressPermalink != "false" && isDIYBackend {
 				displayOpts.SuppressPermalink = true
 			}
 
@@ -382,6 +392,7 @@ func newPreviewCmd() *cobra.Command {
 
 			stackName := s.Ref().Name().String()
 			configErr := workspace.ValidateStackConfigAndApplyProjectConfig(
+				ctx,
 				stackName,
 				proj,
 				cfg.Environment,
@@ -516,7 +527,7 @@ func newPreviewCmd() *cobra.Command {
 		"Use the configuration values in the specified file rather than detecting the file name")
 	cmd.PersistentFlags().StringArrayVarP(
 		&configArray, "config", "c", []string{},
-		"Config to use during the preview")
+		"Config to use during the preview and save to the stack config file")
 	cmd.PersistentFlags().BoolVar(
 		&configPath, "config-path", false,
 		"Config keys contain a path to a property in a map or list to set")
@@ -528,7 +539,7 @@ func newPreviewCmd() *cobra.Command {
 	}
 	cmd.PersistentFlags().StringVar(
 		&importFilePath, "import-file", "",
-		"Save any creates seen during the preview into an import file to use with `pulumi import`")
+		"Save any creates seen during the preview into an import file to use with 'pulumi import'")
 
 	cmd.Flags().BoolVarP(
 		&showSecrets, "show-secrets", "", false, "Emit secrets in plaintext in the plan file. Defaults to `false`")
@@ -595,7 +606,9 @@ func newPreviewCmd() *cobra.Command {
 	cmd.PersistentFlags().BoolVar(
 		&suppressOutputs, "suppress-outputs", false,
 		"Suppress display of stack outputs (in case they contain sensitive values)")
-
+	cmd.PersistentFlags().BoolVar(
+		&suppressProgress, "suppress-progress", false,
+		"Suppress display of periodic progress dots")
 	cmd.PersistentFlags().StringVar(
 		&suppressPermalink, "suppress-permalink", "",
 		"Suppress display of the state permalink")

@@ -66,9 +66,10 @@ func newWatchCmd() *cobra.Command {
 			"`--cwd` flag to use a different directory.",
 		Args: cmdutil.MaximumNArgs(1),
 		Run: cmdutil.RunResultFunc(func(cmd *cobra.Command, args []string) result.Result {
-			ctx := commandContext()
+			ctx := cmd.Context()
 
-			opts, err := updateFlagsToOptions(false /* interactive */, true /* skippreview*/, true /* autoapprove*/)
+			opts, err := updateFlagsToOptions(false /* interactive */, true /* skipPreview */, true, /* autoApprove */
+				false /* previewOnly */)
 			if err != nil {
 				return result.FromError(err)
 			}
@@ -79,6 +80,7 @@ func newWatchCmd() *cobra.Command {
 				ShowReplacementSteps: showReplacementSteps,
 				ShowSameResources:    showSames,
 				SuppressOutputs:      true,
+				SuppressProgress:     true,
 				SuppressPermalink:    true,
 				IsInteractive:        false,
 				Type:                 display.DisplayWatch,
@@ -125,6 +127,7 @@ func newWatchCmd() *cobra.Command {
 
 			stackName := s.Ref().Name().String()
 			configErr := workspace.ValidateStackConfigAndApplyProjectConfig(
+				ctx,
 				stackName,
 				proj,
 				cfg.Environment,

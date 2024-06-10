@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -56,6 +57,8 @@ const (
 type promptForValueFunc func(yes bool, valueType string, defaultValue string, secret bool,
 	isValidFn func(value string) error, opts display.Options) (string, error)
 
+type chooseTemplateFunc func(templates []workspace.Template, opts display.Options) (workspace.Template, error)
+
 type newArgs struct {
 	configArray       []string
 	configPath        bool
@@ -67,6 +70,7 @@ type newArgs struct {
 	name              string
 	offline           bool
 	prompt            promptForValueFunc
+	chooseTemplate    chooseTemplateFunc
 	secretsProvider   string
 	stack             string
 	templateNameOrURL string
@@ -200,7 +204,7 @@ func runNew(ctx context.Context, args newArgs) error {
 	} else if len(templates) == 1 {
 		template = templates[0]
 	} else {
-		if template, err = chooseTemplate(templates, opts); err != nil {
+		if template, err = args.chooseTemplate(templates, opts); err != nil {
 			return err
 		}
 	}
@@ -317,13 +321,26 @@ func runNew(ctx context.Context, args newArgs) error {
 	proj.Name = tokens.PackageName(args.name)
 	proj.Description = &args.description
 	proj.Template = nil
+	// TODO[pulumi/pulumi/issues/16309]: This should be handled by the language runtime.
 	// Workaround for python, most of our templates don't specify a venv but we want to use one
 	if proj.Runtime.Name() == "python" {
-		// If the template does give virtualenv use it, else default to "venv"
-		if _, has := proj.Runtime.Options()["virtualenv"]; !has {
-			proj.Runtime.SetOption("virtualenv", "venv")
+		// If we are using pip (the default toolchain), backfill the virtualenv option.
+		tc, hasToolchain := proj.Runtime.Options()["toolchain"]
+		if !hasToolchain || tc == "pip" {
+			if _, has := proj.Runtime.Options()["virtualenv"]; !has {
+				proj.Runtime.SetOption("virtualenv", "venv")
+			}
 		}
 	}
+
+	// Set the pulumi:template tag to the template name or URL.
+	templateTag := template.Name
+	if args.templateNameOrURL != "" {
+		templateTag = sanitizeTemplate(args.templateNameOrURL)
+	}
+	proj.AddConfigStackTags(map[string]string{
+		apitype.ProjectTemplateTag: templateTag,
+	})
 
 	if err = workspace.SaveProject(proj); err != nil {
 		return fmt.Errorf("saving project: %w", err)
@@ -369,7 +386,7 @@ func runNew(ctx context.Context, args newArgs) error {
 	if !args.generateOnly {
 		span := opentracing.SpanFromContext(ctx)
 		projinfo := &engine.Projinfo{Proj: proj, Root: root}
-		pwd, _, pluginCtx, err := engine.ProjectInfoContext(
+		_, entryPoint, pluginCtx, err := engine.ProjectInfoContext(
 			projinfo,
 			nil,
 			cmdutil.Diag(),
@@ -384,7 +401,7 @@ func runNew(ctx context.Context, args newArgs) error {
 
 		defer pluginCtx.Close()
 
-		if err := installDependencies(pluginCtx, &proj.Runtime, pwd); err != nil {
+		if err := installDependencies(pluginCtx, &proj.Runtime, entryPoint); err != nil {
 			return err
 		}
 	}
@@ -403,6 +420,18 @@ func runNew(ctx context.Context, args newArgs) error {
 	}
 
 	return nil
+}
+
+// sanitizeTemplate strips sensitive data such as credentials and query strings from a template URL.
+func sanitizeTemplate(template string) string {
+	// If it's a valid URL, strip any credentials and query strings.
+	if parsedURL, err := url.Parse(template); err == nil {
+		parsedURL.User = nil
+		parsedURL.RawQuery = ""
+		return parsedURL.String()
+	}
+	// Otherwise, return the original string.
+	return template
 }
 
 // Ensure the directory exists and uses it as the current working
@@ -433,8 +462,8 @@ func useSpecifiedDir(dir string) (string, error) {
 //nolint:vetshadow
 func newNewCmd() *cobra.Command {
 	args := newArgs{
-		interactive: cmdutil.Interactive(),
-		prompt:      promptForValue,
+		prompt:         promptForValue,
+		chooseTemplate: chooseTemplate,
 	}
 
 	getTemplates := func() ([]workspace.Template, error) {
@@ -499,7 +528,7 @@ func newNewCmd() *cobra.Command {
 			"Any missing but required information will be prompted for.\n",
 		Args: cmdutil.MaximumNArgs(1),
 		Run: cmdutil.RunFunc(func(cmd *cobra.Command, cliArgs []string) error {
-			ctx := commandContext()
+			ctx := cmd.Context()
 			if len(cliArgs) > 0 {
 				args.templateNameOrURL = cliArgs[0]
 			}
@@ -518,6 +547,7 @@ func newNewCmd() *cobra.Command {
 				return nil
 			}
 
+			args.interactive = cmdutil.Interactive()
 			args.yes = args.yes || skipConfirmations()
 			return runNew(ctx, args)
 		}),
@@ -787,12 +817,13 @@ func saveConfig(stack backend.Stack, c config.Map) error {
 func installDependencies(ctx *plugin.Context, runtime *workspace.ProjectRuntimeInfo, main string) error {
 	// First make sure the language plugin is present.  We need this to load the required resource plugins.
 	// TODO: we need to think about how best to version this.  For now, it always picks the latest.
-	lang, err := ctx.Host.LanguageRuntime(ctx.Root, ctx.Pwd, runtime.Name(), runtime.Options())
+	programInfo := plugin.NewProgramInfo(ctx.Root, ctx.Pwd, main, runtime.Options())
+	lang, err := ctx.Host.LanguageRuntime(runtime.Name(), programInfo)
 	if err != nil {
 		return fmt.Errorf("failed to load language plugin %s: %w", runtime.Name(), err)
 	}
 
-	if err = lang.InstallDependencies(ctx.Pwd, main); err != nil {
+	if err = lang.InstallDependencies(programInfo); err != nil {
 		return fmt.Errorf("installing dependencies failed; rerun manually to try again, "+
 			"then run `pulumi up` to perform an initial deployment: %w", err)
 	}
@@ -910,7 +941,7 @@ func chooseTemplate(templates []workspace.Template, opts display.Options) (works
 	options, optionToTemplateMap := templatesToOptionArrayAndMap(templates, true)
 	nopts := len(options)
 	pageSize := optimalPageSize(optimalPageSizeOpts{nopts: nopts})
-	message := fmt.Sprintf("\rPlease choose a template (%d/%d shown):\n", pageSize, nopts)
+	message := fmt.Sprintf("\rPlease choose a template (%d total):\n", nopts)
 	message = opts.Color.Colorize(colors.SpecPrompt + message + colors.Reset)
 
 	var option string
@@ -991,7 +1022,7 @@ func promptForConfig(
 		return nil, fmt.Errorf("loading stack config: %w", err)
 	}
 
-	sm, needsSave, err := getStackSecretsManager(stack, ps)
+	sm, needsSave, err := getStackSecretsManager(stack, ps, nil)
 	if err != nil {
 		return nil, err
 	}

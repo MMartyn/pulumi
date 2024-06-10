@@ -15,8 +15,6 @@ package httpstate
 
 import (
 	"context"
-	cryptorand "crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"os"
@@ -26,12 +24,83 @@ import (
 	"github.com/pulumi/pulumi/pkg/v3/backend/display"
 	"github.com/pulumi/pulumi/pkg/v3/secrets/b64"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/apitype"
+	ptesting "github.com/pulumi/pulumi/sdk/v3/go/common/testing"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/testing/diagtest"
-	"github.com/pulumi/pulumi/sdk/v3/go/common/util/contract"
+	"github.com/pulumi/pulumi/sdk/v3/go/common/util/cmdutil"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/workspace"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+//nolint:paralleltest // mutates global configuration
+func TestEnabledFullyQualifiedStackNames(t *testing.T) {
+	// Arrange
+	if os.Getenv("PULUMI_ACCESS_TOKEN") == "" {
+		t.Skipf("Skipping: PULUMI_ACCESS_TOKEN is not set")
+	}
+
+	ctx := context.Background()
+
+	_, err := NewLoginManager().Login(ctx, PulumiCloudURL, false, "", "", nil, true, display.Options{})
+	require.NoError(t, err)
+
+	b, err := New(diagtest.LogSink(t), PulumiCloudURL, &workspace.Project{Name: "testproj"}, false)
+	require.NoError(t, err)
+
+	stackName := ptesting.RandomStackName()
+	ref, err := b.ParseStackReference(stackName)
+	require.NoError(t, err)
+
+	s, err := b.CreateStack(ctx, ref, "", nil)
+	require.NoError(t, err)
+
+	previous := cmdutil.FullyQualifyStackNames
+	expected := s.Ref().FullyQualifiedName().String()
+
+	// Act
+	cmdutil.FullyQualifyStackNames = true
+	defer func() { cmdutil.FullyQualifyStackNames = previous }()
+
+	actual := s.Ref().String()
+
+	// Assert
+	assert.Equal(t, expected, actual)
+}
+
+//nolint:paralleltest // mutates global configuration
+func TestDisabledFullyQualifiedStackNames(t *testing.T) {
+	// Arrange
+	if os.Getenv("PULUMI_ACCESS_TOKEN") == "" {
+		t.Skipf("Skipping: PULUMI_ACCESS_TOKEN is not set")
+	}
+
+	ctx := context.Background()
+
+	_, err := NewLoginManager().Login(ctx, PulumiCloudURL, false, "", "", nil, true, display.Options{})
+	require.NoError(t, err)
+
+	b, err := New(diagtest.LogSink(t), PulumiCloudURL, &workspace.Project{Name: "testproj"}, false)
+	require.NoError(t, err)
+
+	stackName := ptesting.RandomStackName()
+	ref, err := b.ParseStackReference(stackName)
+	require.NoError(t, err)
+
+	s, err := b.CreateStack(ctx, ref, "", nil)
+	require.NoError(t, err)
+
+	previous := cmdutil.FullyQualifyStackNames
+	expected := s.Ref().Name().String()
+
+	// Act
+	cmdutil.FullyQualifyStackNames = false
+	defer func() { cmdutil.FullyQualifyStackNames = previous }()
+
+	actual := s.Ref().String()
+
+	// Assert
+	assert.Equal(t, expected, actual)
+}
 
 //nolint:paralleltest // mutates environment variables
 func TestValueOrDefaultURL(t *testing.T) {
@@ -137,13 +206,6 @@ func TestDefaultOrganizationPriority(t *testing.T) {
 	}
 }
 
-func randomStackName() string {
-	b := make([]byte, 4)
-	_, err := cryptorand.Read(b)
-	contract.AssertNoErrorf(err, "failed to generate random stack name")
-	return "test" + hex.EncodeToString(b)
-}
-
 //nolint:paralleltest // mutates global state
 func TestDisableIntegrityChecking(t *testing.T) {
 	if os.Getenv("PULUMI_ACCESS_TOKEN") == "" {
@@ -158,7 +220,7 @@ func TestDisableIntegrityChecking(t *testing.T) {
 	b, err := New(diagtest.LogSink(t), PulumiCloudURL, &workspace.Project{Name: "testproj"}, false)
 	require.NoError(t, err)
 
-	stackName := randomStackName()
+	stackName := ptesting.RandomStackName()
 	ref, err := b.ParseStackReference(stackName)
 	require.NoError(t, err)
 

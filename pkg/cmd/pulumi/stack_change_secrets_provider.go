@@ -66,7 +66,7 @@ func newStackChangeSecretsProviderCmd() *cobra.Command {
 			"\"gcpkms://projects/<p>/locations/<l>/keyRings/<r>/cryptoKeys/<k>\"`\n" +
 			"* `pulumi stack change-secrets-provider \"hashivault://mykey\"`",
 		Run: cmdutil.RunFunc(func(cmd *cobra.Command, args []string) error {
-			ctx := commandContext()
+			ctx := cmd.Context()
 			return scspcmd.Run(ctx, args)
 		}),
 	}
@@ -155,7 +155,7 @@ func migrateOldConfigAndCheckpointToNewSecretsProvider(ctx context.Context,
 	}
 
 	// Get the newly created secrets manager for the stack
-	newSecretsManager, needsSave, err := getStackSecretsManager(currentStack, reloadedProjectStack)
+	newSecretsManager, needsSave, err := getStackSecretsManager(currentStack, reloadedProjectStack, nil)
 	if err != nil {
 		return err
 	}
@@ -196,7 +196,8 @@ func migrateOldConfigAndCheckpointToNewSecretsProvider(ctx context.Context,
 	}
 
 	// Reserialize the Snapshopshot with the NewSecrets Manager
-	reserializedDeployment, err := stack.SerializeDeployment(snap, newSecretsManager, false /*showSecrets*/)
+	snap.SecretsManager = newSecretsManager
+	reserializedDeployment, err := stack.SerializeDeployment(ctx, snap, false /*showSecrets*/)
 	if err != nil {
 		return err
 	}

@@ -12,7 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+import { PulumiCommand } from "./cmd";
 import { ConfigMap, ConfigValue } from "./config";
+import { ListOptions } from "./localWorkspace";
 import { ProjectSettings } from "./projectSettings";
 import { OutputMap } from "./stack";
 import { StackSettings } from "./stackSettings";
@@ -44,6 +46,10 @@ export interface Workspace {
      * The version of the underlying Pulumi CLI/Engine.
      */
     readonly pulumiVersion: string;
+    /**
+     * The underlying Pulumi CLI.
+     */
+    readonly pulumiCommand: PulumiCommand;
     /**
      *  The inline program `PulumiFn` to be used for Preview/Update operations if any.
      *  If none is specified, the stack will refer to ProjectSettings for this information.
@@ -224,16 +230,18 @@ export interface Workspace {
      */
     removeStack(stackName: string): Promise<void>;
     /**
-     * Returns all Stacks created under the current Project.
-     * This queries underlying backend and may return stacks not present in the Workspace (as Pulumi.<stack>.yaml files).
+     * Returns all Stacks from the underlying backend based on the provided options.
+     * This queries backend and may return stacks not present in the Workspace (as Pulumi.<stack>.yaml files).
+     *
+     * @param opts Options to customize the behavior of the list.
      */
-    listStacks(): Promise<StackSummary[]>;
+    listStacks(opts?: ListOptions): Promise<StackSummary[]>;
     /**
      * Installs a plugin in the Workspace, for example to use cloud providers like AWS or GCP.
      *
      * @param name the name of the plugin.
      * @param version the version of the plugin e.g. "v1.0.0".
-     * @param kind the kind of plugin e.g. "resource"
+     * @param server the server to install the plugin into
      */
     installPluginFromServer(name: string, version: string, server: string): Promise<void>;
     /**
@@ -241,7 +249,7 @@ export interface Workspace {
      *
      * @param name the name of the plugin.
      * @param version the version of the plugin e.g. "v1.0.0".
-     * @param server the server to install the plugin into
+     * @param kind the kind of plugin e.g. "resource"
      */
     installPlugin(name: string, version: string, kind?: string): Promise<void>;
     /**

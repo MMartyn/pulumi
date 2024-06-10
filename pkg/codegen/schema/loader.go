@@ -16,20 +16,18 @@ package schema
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
-	"io"
-	"os"
 	"sync"
-	"time"
 
-	"github.com/edsrzf/mmap-go"
 	"github.com/natefinch/atomic"
 
 	"github.com/blang/semver"
 	"github.com/segmentio/encoding/json"
 
 	pkgWorkspace "github.com/pulumi/pulumi/pkg/v3/workspace"
+	"github.com/pulumi/pulumi/sdk/v3/go/common/apitype"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/diag"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/env"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource/plugin"
@@ -144,11 +142,11 @@ func (l *pluginLoader) LoadPackageReference(pkg string, version *semver.Version)
 	defer l.m.Unlock()
 
 	key := packageIdentity(pkg, version)
-	if p, ok := l.getPackage(key); ok && version == nil {
+	if p, ok := l.getPackage(key); ok {
 		return p, nil
 	}
 
-	schemaBytes, version, err := l.loadSchemaBytes(pkg, version)
+	schemaBytes, version, err := l.loadSchemaBytes(context.TODO(), pkg, version)
 	if err != nil {
 		return nil, err
 	}
@@ -213,8 +211,30 @@ func LoadPackageReference(loader Loader, pkg string, version *semver.Version) (P
 	return ref, nil
 }
 
-func (l *pluginLoader) loadSchemaBytes(pkg string, version *semver.Version) ([]byte, *semver.Version, error) {
-	pluginInfo, err := l.host.ResolvePlugin(workspace.ResourcePlugin, pkg, version)
+func (l *pluginLoader) loadSchemaBytes(
+	ctx context.Context, pkg string, version *semver.Version,
+) ([]byte, *semver.Version, error) {
+	attachPort, err := plugin.GetProviderAttachPort(tokens.Package(pkg))
+	if err != nil {
+		return nil, nil, err
+	}
+	// If PULUMI_DEBUG_PROVIDERS requested an attach port, skip caching and workspace
+	// interaction and load the schema directly from the given port.
+	if attachPort != nil {
+		schemaBytes, provider, err := l.loadPluginSchemaBytes(ctx, pkg, version)
+		if err != nil {
+			return nil, nil, fmt.Errorf("Error loading schema from plugin: %w", err)
+		}
+
+		if version == nil {
+			info, err := provider.GetPluginInfo(ctx)
+			contract.IgnoreError(err) // nonfatal error
+			version = info.Version
+		}
+		return schemaBytes, version, nil
+	}
+
+	pluginInfo, err := l.host.ResolvePlugin(apitype.ResourcePlugin, pkg, version)
 	if err != nil {
 		// Try and install the plugin if it was missing and try again, unless auto plugin installs are turned off.
 		if env.DisableAutomaticPluginAcquisition.Value() {
@@ -224,7 +244,7 @@ func (l *pluginLoader) loadSchemaBytes(pkg string, version *semver.Version) ([]b
 		var missingError *workspace.MissingError
 		if errors.As(err, &missingError) {
 			spec := workspace.PluginSpec{
-				Kind:    workspace.ResourcePlugin,
+				Kind:    apitype.ResourcePlugin,
 				Name:    pkg,
 				Version: version,
 			}
@@ -238,7 +258,7 @@ func (l *pluginLoader) loadSchemaBytes(pkg string, version *semver.Version) ([]b
 				return nil, nil, err
 			}
 
-			pluginInfo, err = l.host.ResolvePlugin(workspace.ResourcePlugin, pkg, version)
+			pluginInfo, err = l.host.ResolvePlugin(apitype.ResourcePlugin, pkg, version)
 			if err != nil {
 				return nil, version, err
 			}
@@ -259,7 +279,7 @@ func (l *pluginLoader) loadSchemaBytes(pkg string, version *semver.Version) ([]b
 		}
 	}
 
-	schemaBytes, provider, err := l.loadPluginSchemaBytes(pkg, version)
+	schemaBytes, provider, err := l.loadPluginSchemaBytes(ctx, pkg, version)
 	if err != nil {
 		return nil, nil, fmt.Errorf("Error loading schema from plugin: %w", err)
 	}
@@ -272,14 +292,16 @@ func (l *pluginLoader) loadSchemaBytes(pkg string, version *semver.Version) ([]b
 	}
 
 	if version == nil {
-		info, _ := provider.GetPluginInfo() // nonfatal error
+		info, _ := provider.GetPluginInfo(ctx) // nonfatal error
 		version = info.Version
 	}
 
 	return schemaBytes, version, nil
 }
 
-func (l *pluginLoader) loadPluginSchemaBytes(pkg string, version *semver.Version) ([]byte, plugin.Provider, error) {
+func (l *pluginLoader) loadPluginSchemaBytes(
+	ctx context.Context, pkg string, version *semver.Version,
+) ([]byte, plugin.Provider, error) {
 	provider, err := l.host.Provider(tokens.Package(pkg), version)
 	if err != nil {
 		return nil, nil, err
@@ -287,60 +309,12 @@ func (l *pluginLoader) loadPluginSchemaBytes(pkg string, version *semver.Version
 	contract.Assertf(provider != nil, "unexpected nil provider for %s@%v", pkg, version)
 
 	schemaFormatVersion := 0
-	schemaBytes, err := provider.GetSchema(schemaFormatVersion)
+	schema, err := provider.GetSchema(ctx, plugin.GetSchemaRequest{
+		Version: schemaFormatVersion,
+	})
 	if err != nil {
 		return nil, nil, err
 	}
 
-	return schemaBytes, provider, nil
-}
-
-var mmapedFiles = make(map[string]mmap.MMap)
-
-func (l *pluginLoader) loadCachedSchemaBytes(pkg string, path string, schemaTime time.Time) ([]byte, bool) {
-	if l.cacheOptions.disableFileCache {
-		return nil, false
-	}
-
-	if schemaMmap, ok := mmapedFiles[path]; ok {
-		return schemaMmap, true
-	}
-
-	success := false
-	schemaFile, err := os.OpenFile(path, os.O_RDONLY, 0o644)
-	defer func() {
-		if !success {
-			schemaFile.Close()
-		}
-	}()
-	if err != nil {
-		return nil, success
-	}
-
-	stat, err := schemaFile.Stat()
-	if err != nil {
-		return nil, success
-	}
-	cachedAt := stat.ModTime()
-
-	if schemaTime.After(cachedAt) {
-		return nil, success
-	}
-
-	if l.cacheOptions.disableMmap {
-		data, err := io.ReadAll(schemaFile)
-		if err != nil {
-			return nil, success
-		}
-		success = true
-		return data, success
-	}
-
-	schemaMmap, err := mmap.Map(schemaFile, mmap.RDONLY, 0)
-	if err != nil {
-		return nil, success
-	}
-	success = true
-
-	return schemaMmap, success
+	return schema.Schema, provider, nil
 }

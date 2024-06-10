@@ -75,6 +75,8 @@ func newUpCmd() *cobra.Command {
 	var skipPreview bool
 	var showFullOutput bool
 	var suppressOutputs bool
+	var suppressProgress bool
+	var continueOnError bool
 	var suppressPermalink string
 	var yes bool
 	var secretsProvider string
@@ -122,6 +124,7 @@ func newUpCmd() *cobra.Command {
 
 		stackName := s.Ref().Name().String()
 		configErr := workspace.ValidateStackConfigAndApplyProjectConfig(
+			ctx,
 			stackName,
 			proj,
 			cfg.Environment,
@@ -159,8 +162,9 @@ func newUpCmd() *cobra.Command {
 			TargetDependents:          targetDependents,
 			// Trigger a plan to be generated during the preview phase which can be constrained to during the
 			// update phase.
-			GeneratePlan: true,
-			Experimental: hasExperimentalCommands(),
+			GeneratePlan:    true,
+			Experimental:    hasExperimentalCommands(),
+			ContinueOnError: continueOnError,
 		}
 
 		if planFilePath != "" {
@@ -355,7 +359,9 @@ func newUpCmd() *cobra.Command {
 		}
 
 		stackName := s.Ref().String()
-		configErr := workspace.ValidateStackConfigAndApplyProjectConfig(stackName,
+		configErr := workspace.ValidateStackConfigAndApplyProjectConfig(
+			ctx,
+			stackName,
 			proj,
 			cfg.Environment,
 			cfg.Config,
@@ -377,8 +383,9 @@ func newUpCmd() *cobra.Command {
 			Refresh:          refreshOption,
 			// If we're in experimental mode then we trigger a plan to be generated during the preview phase
 			// which will be constrained to during the update phase.
-			GeneratePlan: hasExperimentalCommands(),
-			Experimental: hasExperimentalCommands(),
+			GeneratePlan:    hasExperimentalCommands(),
+			Experimental:    hasExperimentalCommands(),
+			ContinueOnError: continueOnError,
 		}
 
 		// TODO for the URL case:
@@ -426,7 +433,7 @@ func newUpCmd() *cobra.Command {
 			"`--cwd` flag to use a different directory.",
 		Args: cmdutil.MaximumNArgs(1),
 		Run: cmdutil.RunResultFunc(func(cmd *cobra.Command, args []string) result.Result {
-			ctx := commandContext()
+			ctx := cmd.Context()
 
 			// Remote implies we're skipping previews.
 			if remoteArgs.remote {
@@ -441,7 +448,7 @@ func newUpCmd() *cobra.Command {
 					errors.New("--yes or --skip-preview must be passed in to proceed when running in non-interactive mode"))
 			}
 
-			opts, err := updateFlagsToOptions(interactive, skipPreview, yes)
+			opts, err := updateFlagsToOptions(interactive, skipPreview, yes, false /* previewOnly */)
 			if err != nil {
 				return result.FromError(err)
 			}
@@ -463,6 +470,7 @@ func newUpCmd() *cobra.Command {
 				ShowSameResources:      showSames,
 				ShowReads:              showReads,
 				SuppressOutputs:        suppressOutputs,
+				SuppressProgress:       suppressProgress,
 				TruncateOutput:         !showFullOutput,
 				IsInteractive:          interactive,
 				Type:                   displayType,
@@ -480,10 +488,6 @@ func newUpCmd() *cobra.Command {
 			}
 
 			if remoteArgs.remote {
-				if len(args) == 0 {
-					return result.FromError(errors.New("must specify remote URL"))
-				}
-
 				err = validateUnsupportedRemoteFlags(expectNop, configArray, path, client, jsonDisplay, policyPackPaths,
 					policyPackConfigPaths, refresh, showConfig, showPolicyRemediations, showReplacementSteps, showSames,
 					showReads, suppressOutputs, secretsProvider, &targets, replaces, targetReplaces,
@@ -492,17 +496,21 @@ func newUpCmd() *cobra.Command {
 					return result.FromError(err)
 				}
 
-				return runDeployment(ctx, opts.Display, apitype.Update, stackName, args[0], remoteArgs)
+				var url string
+				if len(args) > 0 {
+					url = args[0]
+				}
+				return runDeployment(ctx, opts.Display, apitype.Update, stackName, url, remoteArgs)
 			}
 
-			filestateBackend, err := isFilestateBackend(opts.Display)
+			isDIYBackend, err := isDIYBackend(opts.Display)
 			if err != nil {
 				return result.FromError(err)
 			}
 
-			// by default, we are going to suppress the permalink when using self-managed backends
+			// by default, we are going to suppress the permalink when using DIY backends
 			// this can be re-enabled by explicitly passing "false" to the `suppress-permalink` flag
-			if suppressPermalink != "false" && filestateBackend {
+			if suppressPermalink != "false" && isDIYBackend {
 				opts.Display.SuppressPermalink = true
 			}
 
@@ -528,7 +536,7 @@ func newUpCmd() *cobra.Command {
 		"Use the configuration values in the specified file rather than detecting the file name")
 	cmd.PersistentFlags().StringArrayVarP(
 		&configArray, "config", "c", []string{},
-		"Config to use during the update")
+		"Config to use during the update and save to the stack config file")
 	cmd.PersistentFlags().BoolVar(
 		&path, "config-path", false,
 		"Config keys contain a path to a property in a map or list to set")
@@ -606,6 +614,9 @@ func newUpCmd() *cobra.Command {
 		&suppressOutputs, "suppress-outputs", false,
 		"Suppress display of stack outputs (in case they contain sensitive values)")
 	cmd.PersistentFlags().BoolVar(
+		&suppressProgress, "suppress-progress", false,
+		"Suppress display of periodic progress dots")
+	cmd.PersistentFlags().BoolVar(
 		&showFullOutput, "show-full-output", true,
 		"Display full length of stack outputs")
 	cmd.PersistentFlags().StringVar(
@@ -615,6 +626,9 @@ func newUpCmd() *cobra.Command {
 	cmd.PersistentFlags().BoolVarP(
 		&yes, "yes", "y", false,
 		"Automatically approve and perform the update after previewing it")
+	cmd.PersistentFlags().BoolVar(
+		&continueOnError, "continue-on-error", false,
+		"Continue updating resources even if an error is encountered")
 
 	cmd.PersistentFlags().StringVar(
 		&planFilePath, "plan", "",

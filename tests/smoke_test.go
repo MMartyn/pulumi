@@ -11,7 +11,6 @@ import (
 	"github.com/pulumi/pulumi/pkg/v3/codegen/schema"
 
 	ptesting "github.com/pulumi/pulumi/sdk/v3/go/common/testing"
-	"github.com/pulumi/pulumi/sdk/v3/go/common/workspace"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -42,7 +41,7 @@ func TestLanguageNewSmoke(t *testing.T) {
 			e := ptesting.NewEnvironment(t)
 			defer deleteIfNotFailed(e)
 
-			// `new` wants to work in an empty directory but our use of local filestate means we have a
+			// `new` wants to work in an empty directory but our use of local url means we have a
 			// ".pulumi" directory at root.
 			projectDir := filepath.Join(e.RootPath, "project")
 			err := os.Mkdir(projectDir, 0o700)
@@ -220,15 +219,16 @@ func TestPackageGetSchema(t *testing.T) {
 		e.RunCommand("pulumi", "plugin", "rm", "resource", "random", "--all", "--yes")
 	}
 
-	bindSchema := func(schemaJson string) {
+	bindSchema := func(pkg, schemaJson string) *schema.Package {
 		var schemaSpec *schema.PackageSpec
 		err := json.Unmarshal([]byte(schemaJson), &schemaSpec)
-		require.NoError(t, err, "Unmarshalling schema specs from random should work")
+		require.NoError(t, err, "Unmarshalling schema specs from %s should work", pkg)
 		require.NotNil(t, schemaSpec, "Specification should be non-nil")
 		schema, diags, err := schema.BindSpec(*schemaSpec, nil)
 		require.NoError(t, err, "Binding the schema spec should work")
 		require.False(t, diags.HasErrors(), "Binding schema spec should have no errors")
 		require.NotNil(t, schema)
+		return schema
 	}
 
 	// Make sure the random provider is not installed locally
@@ -241,22 +241,20 @@ func TestPackageGetSchema(t *testing.T) {
 
 	// get the schema and bind it
 	schemaJSON, _ := e.RunCommand("pulumi", "package", "get-schema", "random")
-	bindSchema(schemaJSON)
+	bindSchema("random", schemaJSON)
 
 	// try again using a specific version
 	removeRandomFromLocalPlugins()
 	schemaJSON, _ = e.RunCommand("pulumi", "package", "get-schema", "random@4.13.0")
-	bindSchema(schemaJSON)
+	bindSchema("random", schemaJSON)
 
 	// Now that the random provider is installed, run the command again without removing random from plugins
 	schemaJSON, _ = e.RunCommand("pulumi", "package", "get-schema", "random")
-	bindSchema(schemaJSON)
+	bindSchema("random", schemaJSON)
 
 	// Now try to get the schema from the path to the binary
-	pulumiHome, err := workspace.GetPulumiHomeDir()
-	require.NoError(t, err)
 	binaryPath := filepath.Join(
-		pulumiHome,
+		e.HomePath,
 		"plugins",
 		"resource-random-v4.13.0",
 		"pulumi-resource-random")
@@ -265,7 +263,15 @@ func TestPackageGetSchema(t *testing.T) {
 	}
 
 	schemaJSON, _ = e.RunCommand("pulumi", "package", "get-schema", binaryPath)
-	bindSchema(schemaJSON)
+	bindSchema("random", schemaJSON)
+
+	// Now try and get the parameterized schema from the test-provider
+	providerDir, err := filepath.Abs("testprovider")
+	require.NoError(t, err)
+	schemaJSON, _ = e.RunCommand("pulumi", "package", "get-schema", providerDir, "parameter")
+	schema := bindSchema("testprovider", schemaJSON)
+	// Sub-schema is a very simple empty schema with the name set from the argument given
+	assert.Equal(t, "parameter", schema.Name)
 }
 
 //nolint:paralleltest // disabled parallel because we change the plugins cache
@@ -306,7 +312,7 @@ func TestLanguageImportSmoke(t *testing.T) {
 			e := ptesting.NewEnvironment(t)
 			defer deleteIfNotFailed(e)
 
-			// `new` wants to work in an empty directory but our use of local filestate means we have a
+			// `new` wants to work in an empty directory but our use of local url means we have a
 			// ".pulumi" directory at root.
 			projectDir := filepath.Join(e.RootPath, "project")
 			err := os.Mkdir(projectDir, 0o700)
@@ -373,14 +379,10 @@ func TestPreviewImportFile(t *testing.T) {
 
 	expectedResources := []interface{}{
 		map[string]interface{}{
-			"id": "<PLACEHOLDER>",
-			// This isn't ideal, we don't really need to change the "name" here because it isn't used as a
-			// parent, but currently we generate unique names for all resources rather than just unique names
-			// for all parent resources.
-			"name":        "usernameRandomPet",
-			"logicalName": "username",
-			"type":        "random:index/randomPet:RandomPet",
-			"version":     "4.12.0",
+			"id":      "<PLACEHOLDER>",
+			"name":    "username",
+			"type":    "random:index/randomPet:RandomPet",
+			"version": "4.12.0",
 		},
 		map[string]interface{}{
 			"name":      "component",
@@ -388,8 +390,12 @@ func TestPreviewImportFile(t *testing.T) {
 			"component": true,
 		},
 		map[string]interface{}{
-			"id":      "<PLACEHOLDER>",
-			"name":    "username",
+			"id":          "<PLACEHOLDER>",
+			"logicalName": "username",
+			// This isn't ideal, we don't really need to change the "name" here because it isn't used as a
+			// parent, but currently we generate unique names for all resources rather than just unique names
+			// for all parent resources.
+			"name":    "usernameRandomPet",
 			"type":    "random:index/randomPet:RandomPet",
 			"version": "4.12.0",
 			"parent":  "component",
@@ -404,4 +410,45 @@ func TestPreviewImportFile(t *testing.T) {
 	assert.ElementsMatch(t, expectedResources, actual["resources"])
 	_, has := actual["nameTable"]
 	assert.False(t, has, "nameTable should not be present in import file")
+}
+
+// Small integration test for relative plugin paths. It's hard to do this test via the standard ProgramTest because that
+// framework does it's own manipulation of plugin paths. Regression test for
+// https://github.com/pulumi/pulumi/issues/15467.
+func TestRelativePluginPath(t *testing.T) {
+	t.Parallel()
+
+	e := ptesting.NewEnvironment(t)
+	defer deleteIfNotFailed(e)
+
+	// We can't use ImportDirectory here because we need to run this in the right directory such that the relative paths
+	// work.
+	var err error
+	e.CWD, err = filepath.Abs("testdata/relative_plugin_node")
+	require.NoError(t, err)
+
+	e.RunCommand("pulumi", "login", "--cloud-url", e.LocalURL())
+	e.RunCommand("pulumi", "stack", "init", "test")
+	e.RunCommand("pulumi", "install")
+	e.RunCommand("pulumi", "preview")
+}
+
+// Quick sanity tests for https://github.com/pulumi/pulumi/issues/16248. Ensure we can run plugins and auto-fetch them.
+//
+//nolint:paralleltest // changes env vars
+func TestPluginRun(t *testing.T) {
+	t.Setenv("PULUMI_DISABLE_AUTOMATIC_PLUGIN_ACQUISITION", "false")
+
+	e := ptesting.NewEnvironment(t)
+	defer deleteIfNotFailed(e)
+
+	removeRandomFromLocalPlugins := func() {
+		e.RunCommand("pulumi", "plugin", "rm", "resource", "random", "--all", "--yes")
+	}
+	removeRandomFromLocalPlugins()
+
+	_, stderr := e.RunCommandExpectError("pulumi", "plugin", "run", "--kind=resource", "random", "--", "--help")
+	assert.Contains(t, stderr, "flag: help requested")
+	_, stderr = e.RunCommandExpectError("pulumi", "plugin", "run", "--kind=resource", "random", "--", "--help")
+	assert.Contains(t, stderr, "flag: help requested")
 }

@@ -14,15 +14,16 @@
 
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import Any, Callable, List, Mapping, Optional
+from typing import Any, Callable, List, Mapping, Optional, Awaitable
 
+from ._cmd import PulumiCommand
 from ._config import ConfigMap, ConfigValue
 from ._output import OutputMap
 from ._project_settings import ProjectSettings
 from ._stack_settings import StackSettings
 from ._tag import TagMap
 
-PulumiFn = Callable[[], None]
+PulumiFn = Callable[[], Optional[Awaitable[None]]]
 
 
 class StackSummary:
@@ -149,6 +150,11 @@ class Workspace(ABC):
     pulumi_version: str
     """
     The version of the underlying Pulumi CLI/Engine.
+    """
+
+    pulumi_command: PulumiCommand
+    """
+    The underlying PulumiCommand instance that is used to execute CLI commands.
     """
 
     @abstractmethod
@@ -398,12 +404,13 @@ class Workspace(ABC):
         """
 
     @abstractmethod
-    def list_stacks(self) -> List[StackSummary]:
+    def list_stacks(self, include_all: Optional[bool] = None) -> List[StackSummary]:
         """
         Returns all Stacks created under the current Project.
         This queries underlying backend and may return stacks not present in the Workspace
         (as Pulumi.<stack>.yaml files).
 
+        :param include_all: List all stacks instead of just stacks for the current project
         :returns: List[StackSummary]
         """
 

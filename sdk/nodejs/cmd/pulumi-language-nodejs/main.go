@@ -130,7 +130,7 @@ func main() {
 	handle, err := rpcutil.ServeWithOptions(rpcutil.ServeOptions{
 		Cancel: cancelChannel,
 		Init: func(srv *grpc.Server) error {
-			host := newLanguageHost(engineAddress, tracing)
+			host := newLanguageHost(engineAddress, tracing, false /* forceTsc */)
 			pulumirpc.RegisterLanguageRuntimeServer(srv, host)
 			return nil
 		},
@@ -151,7 +151,16 @@ func main() {
 
 // locateModule resolves a node module name to a file path that can be loaded
 func locateModule(ctx context.Context, mod, programDir, nodeBin string) (string, error) {
-	args := []string{"-e", fmt.Sprintf("console.log(require.resolve('%s'));", mod)}
+	args := []string{"-e", fmt.Sprintf(`try {
+		console.log(require.resolve('%s'));
+	} catch (error) {
+		if (error.code === 'MODULE_NOT_FOUND') {
+			console.error("It looks like the Pulumi SDK has not been installed. Have you run pulumi install?")
+		} else {
+			console.error(error.message);
+		}
+		process.exit(1);
+	}`, mod)}
 
 	tracingSpan, _ := opentracing.StartSpanFromContext(ctx,
 		"locateModule",
@@ -166,6 +175,9 @@ func locateModule(ctx context.Context, mod, programDir, nodeBin string) (string,
 	cmd.Dir = programDir
 	out, err := cmd.Output()
 	if err != nil {
+		if ee, ok := err.(*exec.ExitError); ok {
+			return "", errors.New(string(ee.Stderr))
+		}
 		return "", err
 	}
 	return strings.TrimSpace(string(out)), nil
@@ -178,6 +190,9 @@ type nodeLanguageHost struct {
 
 	engineAddress string
 	tracing       string
+
+	// used by language conformance tests to force TSC usage
+	forceTsc bool
 }
 
 type nodeOptions struct {
@@ -223,11 +238,12 @@ func parseOptions(root string, options map[string]interface{}) (nodeOptions, err
 }
 
 func newLanguageHost(
-	engineAddress, tracing string,
+	engineAddress, tracing string, forceTsc bool,
 ) pulumirpc.LanguageRuntimeServer {
 	return &nodeLanguageHost{
 		engineAddress: engineAddress,
 		tracing:       tracing,
+		forceTsc:      forceTsc,
 	}
 }
 
@@ -483,7 +499,7 @@ func getPluginVersion(info packageJSON) (string, error) {
 		}
 	}
 	if strings.IndexRune(version, 'v') != 0 {
-		return fmt.Sprintf("v%s", version), nil
+		return "v" + version, nil
 	}
 	return version, nil
 }
@@ -561,7 +577,7 @@ func (host *nodeLanguageHost) Run(ctx context.Context, req *pulumirpc.RunRequest
 
 	nodeBin, err := exec.LookPath("node")
 	if err != nil {
-		cmdutil.Exit(fmt.Errorf("could not find node on the $PATH: %w", err))
+		return &pulumirpc.RunResponse{Error: "could not find node on the $PATH: " + err.Error()}, nil
 	}
 
 	runPath := os.Getenv("PULUMI_LANGUAGE_NODEJS_RUN_PATH")
@@ -569,10 +585,15 @@ func (host *nodeLanguageHost) Run(ctx context.Context, req *pulumirpc.RunRequest
 		runPath = defaultRunPath
 	}
 
-	runPath, err = locateModule(ctx, runPath, req.Info.ProgramDirectory, nodeBin)
+	// If we're forcing tsc the program directory for running is actually ./bin
+	programDirectory := req.Info.ProgramDirectory
+	if host.forceTsc {
+		req.Info.ProgramDirectory = filepath.Join(programDirectory, "bin")
+	}
+
+	runPath, err = locateModule(ctx, runPath, programDirectory, nodeBin)
 	if err != nil {
-		cmdutil.ExitError(
-			"It looks like the Pulumi SDK has not been installed. Have you run npm install or yarn install?")
+		return &pulumirpc.RunResponse{Error: err.Error()}, nil
 	}
 
 	// Channel producing the final response we want to issue to our caller. Will get the result of
@@ -807,17 +828,44 @@ func (host *nodeLanguageHost) InstallDependencies(
 
 	stdout.Write([]byte("Installing dependencies...\n\n"))
 
-	_, err = npm.Install(ctx, req.Info.ProgramDirectory, false /*production*/, stdout, stderr)
+	workspaceRoot := req.Info.ProgramDirectory
+	newWorkspaceRoot, err := npm.FindWorkspaceRoot(req.Info.ProgramDirectory)
 	if err != nil {
-		return fmt.Errorf("npm install failed: %w", err)
+		// If we are not in a npm/yarn workspace, we will keep the current directory as the root.
+		if !errors.Is(err, npm.ErrNotInWorkspace) {
+			return fmt.Errorf("failure while trying to find workspace root: %w", err)
+		}
+	} else {
+		stdout.Write([]byte(fmt.Sprintf("Detected workspace root at %s\n", newWorkspaceRoot)))
+		workspaceRoot = newWorkspaceRoot
+	}
+
+	_, err = npm.Install(ctx, workspaceRoot, false /*production*/, stdout, stderr)
+	if err != nil {
+		return fmt.Errorf("dependency installation failed: %w", err)
 	}
 
 	stdout.Write([]byte("Finished installing dependencies\n\n"))
 
+	if host.forceTsc {
+		// If we're forcing tsc for conformance testing this is our chance to run it before actually running the program.
+		// We probably want to see about making something like this an explicit "pulumi build" step, but for now shim'ing this
+		// in here works well enough for conformance testing.
+		tscCmd := exec.Command("npx", "tsc")
+		tscCmd.Dir = req.Info.ProgramDirectory
+		tscCmd.Stdout = stdout
+		tscCmd.Stderr = stderr
+		if err := tscCmd.Run(); err != nil {
+			return fmt.Errorf("failed to run tsc: %w", err)
+		}
+	}
+
 	return closer.Close()
 }
 
-func (host *nodeLanguageHost) About(ctx context.Context, req *emptypb.Empty) (*pulumirpc.AboutResponse, error) {
+func (host *nodeLanguageHost) About(ctx context.Context,
+	req *pulumirpc.AboutRequest,
+) (*pulumirpc.AboutResponse, error) {
 	getResponse := func(execString string, args ...string) (string, string, error) {
 		ex, err := executable.FindExecutable(execString)
 		if err != nil {
@@ -862,13 +910,14 @@ type yarnLockTree struct {
 	Children []yarnLockTree `json:"children"`
 }
 
-func parseYarnLockFile(path string) ([]*pulumirpc.DependencyInfo, error) {
+func parseYarnLockFile(programDirectory, path string) ([]*pulumirpc.DependencyInfo, error) {
 	ex, err := executable.FindExecutable("yarn")
 	if err != nil {
 		return nil, fmt.Errorf("found %s but no yarn executable: %w", path, err)
 	}
 	cmdArgs := []string{"list", "--json"}
 	cmd := exec.Command(ex, cmdArgs...)
+	cmd.Dir = programDirectory
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("failed to run \"%s %s\": %w", ex, strings.Join(cmdArgs, " "), err)
@@ -922,13 +971,14 @@ type npmPackage struct {
 	Resolved string `json:"resolved"`
 }
 
-func parseNpmLockFile(path string) ([]*pulumirpc.DependencyInfo, error) {
+func parseNpmLockFile(programDirectory, path string) ([]*pulumirpc.DependencyInfo, error) {
 	ex, err := executable.FindExecutable("npm")
 	if err != nil {
 		return nil, fmt.Errorf("found %s but not npm: %w", path, err)
 	}
 	cmdArgs := []string{"ls", "--json", "--depth=0"}
 	cmd := exec.Command(ex, cmdArgs...)
+	cmd.Dir = programDirectory
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf(`failed to run "%s %s": %w`, ex, strings.Join(cmdArgs, " "), err)
@@ -1006,12 +1056,12 @@ func (host *nodeLanguageHost) GetProgramDependencies(
 	var result []*pulumirpc.DependencyInfo
 
 	if _, err = os.Stat(yarnFile); err == nil {
-		result, err = parseYarnLockFile(yarnFile)
+		result, err = parseYarnLockFile(req.Info.ProgramDirectory, yarnFile)
 		if err != nil {
 			return nil, err
 		}
 	} else if _, err = os.Stat(npmFile); err == nil {
-		result, err = parseNpmLockFile(npmFile)
+		result, err = parseNpmLockFile(req.Info.ProgramDirectory, npmFile)
 		if err != nil {
 			return nil, err
 		}
@@ -1079,7 +1129,7 @@ func (host *nodeLanguageHost) GenerateProject(
 		return nil, err
 	}
 
-	err = codegen.GenerateProject(req.TargetDirectory, project, program, req.LocalDependencies)
+	err = codegen.GenerateProject(req.TargetDirectory, project, program, req.LocalDependencies, host.forceTsc)
 	if err != nil {
 		return nil, err
 	}
@@ -1126,7 +1176,7 @@ func (host *nodeLanguageHost) GenerateProgram(
 		}, nil
 	}
 	if program == nil {
-		return nil, fmt.Errorf("internal error program was nil")
+		return nil, errors.New("internal error program was nil")
 	}
 
 	files, diags, err := codegen.GenerateProgram(program)
@@ -1165,7 +1215,8 @@ func (host *nodeLanguageHost) GeneratePackage(
 			Diagnostics: rpcDiagnostics,
 		}, nil
 	}
-	files, err := codegen.GeneratePackage("pulumi-language-nodejs", pkg, req.ExtraFiles)
+
+	files, err := codegen.GeneratePackage("pulumi-language-nodejs", pkg, req.ExtraFiles, req.LocalDependencies)
 	if err != nil {
 		return nil, err
 	}
@@ -1264,13 +1315,20 @@ func (host *nodeLanguageHost) Pack(ctx context.Context, req *pulumirpc.PackReque
 			return nil, fmt.Errorf("yarn run tsc: %w", err)
 		}
 
-		// "tsc" doesn't copy in the "proto" directory of .js files.
+		// "tsc" doesn't copy in the "proto" and "vendor" directories.
 		err = fsutil.CopyFile(
 			filepath.Join(req.PackageDirectory, "bin", "proto"),
 			filepath.Join(req.PackageDirectory, "proto"),
 			nil)
 		if err != nil {
 			return nil, fmt.Errorf("copy proto: %w", err)
+		}
+		err = fsutil.CopyFile(
+			filepath.Join(req.PackageDirectory, "bin", "vendor"),
+			filepath.Join(req.PackageDirectory, "vendor"),
+			nil)
+		if err != nil {
+			return nil, fmt.Errorf("copy vendor: %w", err)
 		}
 
 	} else {
@@ -1311,22 +1369,6 @@ func (host *nodeLanguageHost) Pack(ctx context.Context, req *pulumirpc.PackReque
 		if err != nil {
 			return nil, fmt.Errorf("copy package.json: %w", err)
 		}
-	}
-
-	// Mutate the package.json to replace version with the version we've been given.
-	packageJSONPath := filepath.Join(req.PackageDirectory, "bin", "package.json")
-	packageJSON, err = readPackageJSON(packageJSONPath)
-	if err != nil {
-		return nil, err
-	}
-	packageJSON["version"] = req.Version
-	packageJSONData, err := json.Marshal(packageJSON)
-	if err != nil {
-		return nil, fmt.Errorf("marshal package.json: %w", err)
-	}
-	err = os.WriteFile(packageJSONPath, packageJSONData, 0o600)
-	if err != nil {
-		return nil, fmt.Errorf("write package.json: %w", err)
 	}
 
 	err = writeString("$ npm pack\n")

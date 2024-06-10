@@ -32,11 +32,8 @@ import (
 
 func newConfigEnvCmd(stackRef *string) *cobra.Command {
 	impl := configEnvCmd{
-		ctx:              commandContext(),
 		stdin:            os.Stdin,
 		stdout:           os.Stdout,
-		interactive:      cmdutil.Interactive(),
-		color:            cmdutil.GetGlobalColorization(),
 		readProject:      readProject,
 		requireStack:     requireStack,
 		loadProjectStack: loadProjectStack,
@@ -61,8 +58,6 @@ func newConfigEnvCmd(stackRef *string) *cobra.Command {
 }
 
 type configEnvCmd struct {
-	ctx context.Context
-
 	stdin  io.Reader
 	stdout io.Writer
 
@@ -85,7 +80,13 @@ type configEnvCmd struct {
 	stackRef *string
 }
 
-func (cmd *configEnvCmd) loadEnvPreamble() (*workspace.ProjectStack, *workspace.Project, *backend.Stack, error) {
+func (cmd *configEnvCmd) initArgs() {
+	cmd.interactive = cmdutil.Interactive()
+	cmd.color = cmdutil.GetGlobalColorization()
+}
+
+func (cmd *configEnvCmd) loadEnvPreamble(ctx context.Context,
+) (*workspace.ProjectStack, *workspace.Project, *backend.Stack, error) {
 	opts := display.Options{Color: cmd.color}
 
 	project, _, err := cmd.readProject()
@@ -93,7 +94,7 @@ func (cmd *configEnvCmd) loadEnvPreamble() (*workspace.ProjectStack, *workspace.
 		return nil, nil, nil, err
 	}
 
-	stack, err := cmd.requireStack(cmd.ctx, *cmd.stackRef, stackOfferNew|stackSetCurrent, opts)
+	stack, err := cmd.requireStack(ctx, *cmd.stackRef, stackOfferNew|stackSetCurrent, opts)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -111,8 +112,8 @@ func (cmd *configEnvCmd) loadEnvPreamble() (*workspace.ProjectStack, *workspace.
 	return projectStack, project, &stack, nil
 }
 
-func (cmd *configEnvCmd) listStackEnvironments(jsonOut bool) error {
-	projectStack, _, _, err := cmd.loadEnvPreamble()
+func (cmd *configEnvCmd) listStackEnvironments(ctx context.Context, jsonOut bool) error {
+	projectStack, _, _, err := cmd.loadEnvPreamble(ctx)
 	if err != nil {
 		return err
 	}
@@ -149,6 +150,7 @@ func (cmd *configEnvCmd) listStackEnvironments(jsonOut bool) error {
 }
 
 func (cmd *configEnvCmd) editStackEnvironment(
+	ctx context.Context,
 	showSecrets bool,
 	yes bool,
 	edit func(stack *workspace.ProjectStack) error,
@@ -157,7 +159,7 @@ func (cmd *configEnvCmd) editStackEnvironment(
 		return errors.New("--yes must be passed in to proceed when running in non-interactive mode")
 	}
 
-	projectStack, project, stack, err := cmd.loadEnvPreamble()
+	projectStack, project, stack, err := cmd.loadEnvPreamble(ctx)
 	if err != nil {
 		return err
 	}
@@ -166,7 +168,7 @@ func (cmd *configEnvCmd) editStackEnvironment(
 		return err
 	}
 
-	if err := listConfig(cmd.ctx, cmd.stdout, project, *stack, projectStack, showSecrets, false); err != nil {
+	if err := listConfig(ctx, cmd.stdout, project, *stack, projectStack, showSecrets, false, false); err != nil {
 		return err
 	}
 

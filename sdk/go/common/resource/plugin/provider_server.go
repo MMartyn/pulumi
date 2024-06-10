@@ -23,6 +23,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
 
+	"github.com/blang/semver"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource/config"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/tokens"
@@ -41,12 +42,13 @@ func NewProviderServer(provider Provider) pulumirpc.ResourceProviderServer {
 	return &providerServer{provider: provider}
 }
 
-func (p *providerServer) unmarshalOptions(label string) MarshalOptions {
+func (p *providerServer) unmarshalOptions(label string, keepOutputValues bool) MarshalOptions {
 	return MarshalOptions{
-		Label:         label,
-		KeepUnknowns:  true,
-		KeepSecrets:   true,
-		KeepResources: true,
+		Label:            label,
+		KeepUnknowns:     true,
+		KeepSecrets:      true,
+		KeepResources:    true,
+		KeepOutputValues: keepOutputValues,
 	}
 }
 
@@ -128,18 +130,67 @@ func (p *providerServer) marshalDiff(diff DiffResult) (*pulumirpc.DiffResponse, 
 	}, nil
 }
 
-func (p *providerServer) GetSchema(ctx context.Context,
-	req *pulumirpc.GetSchemaRequest,
-) (*pulumirpc.GetSchemaResponse, error) {
-	schema, err := p.provider.GetSchema(int(req.GetVersion()))
+func (p *providerServer) Parameterize(
+	ctx context.Context, req *pulumirpc.ParameterizeRequest,
+) (*pulumirpc.ParameterizeResponse, error) {
+	var params ParameterizeParameters
+	switch p := req.Parameters.(type) {
+	case *pulumirpc.ParameterizeRequest_Args:
+		params = ParameterizeArgs{Args: p.Args.GetArgs()}
+	case *pulumirpc.ParameterizeRequest_Value:
+		var version *semver.Version
+		if v := p.Value.GetVersion(); v != "" {
+			pV, err := semver.Parse(v)
+			if err != nil {
+				return nil, err
+			}
+			version = &pV
+		}
+		params = ParameterizeValue{
+			Name:    p.Value.GetName(),
+			Version: version,
+			Value:   nil,
+		}
+	}
+	resp, err := p.provider.Parameterize(ctx, ParameterizeRequest{Parameters: params})
 	if err != nil {
 		return nil, err
 	}
-	return &pulumirpc.GetSchemaResponse{Schema: string(schema)}, nil
+	var v string
+	if resp.Version != nil {
+		v = resp.Version.String()
+	}
+	return &pulumirpc.ParameterizeResponse{
+		Name:    resp.Name,
+		Version: v,
+	}, nil
+}
+
+func (p *providerServer) GetSchema(ctx context.Context,
+	req *pulumirpc.GetSchemaRequest,
+) (*pulumirpc.GetSchemaResponse, error) {
+	var subpackageVersion *semver.Version
+	if req.SubpackageVersion != "" {
+		v, err := semver.ParseTolerant(req.SubpackageVersion)
+		if err != nil {
+			return nil, err
+		}
+		subpackageVersion = &v
+	}
+
+	schema, err := p.provider.GetSchema(ctx, GetSchemaRequest{
+		Version:           int(req.Version),
+		SubpackageName:    req.SubpackageName,
+		SubpackageVersion: subpackageVersion,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &pulumirpc.GetSchemaResponse{Schema: string(schema.Schema)}, nil
 }
 
 func (p *providerServer) GetPluginInfo(ctx context.Context, req *emptypb.Empty) (*pulumirpc.PluginInfo, error) {
-	info, err := p.provider.GetPluginInfo()
+	info, err := p.provider.GetPluginInfo(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -161,7 +212,7 @@ func (p *providerServer) Attach(ctx context.Context, req *pulumirpc.PluginAttach
 }
 
 func (p *providerServer) Cancel(ctx context.Context, req *emptypb.Empty) (*emptypb.Empty, error) {
-	if err := p.provider.SignalCancellation(); err != nil {
+	if err := p.provider.SignalCancellation(ctx); err != nil {
 		return nil, err
 	}
 	return &emptypb.Empty{}, nil
@@ -172,28 +223,33 @@ func (p *providerServer) CheckConfig(ctx context.Context,
 ) (*pulumirpc.CheckResponse, error) {
 	urn := resource.URN(req.GetUrn())
 
-	state, err := UnmarshalProperties(req.GetOlds(), p.unmarshalOptions("olds"))
+	state, err := UnmarshalProperties(req.GetOlds(), p.unmarshalOptions("olds", false /* keepOutputValues */))
 	if err != nil {
 		return nil, err
 	}
 
-	inputs, err := UnmarshalProperties(req.GetNews(), p.unmarshalOptions("news"))
+	inputs, err := UnmarshalProperties(req.GetNews(), p.unmarshalOptions("news", false /* keepOutputValues */))
 	if err != nil {
 		return nil, err
 	}
 
-	newInputs, failures, err := p.provider.CheckConfig(urn, state, inputs, true)
+	resp, err := p.provider.CheckConfig(ctx, CheckConfigRequest{
+		URN:           urn,
+		Olds:          state,
+		News:          inputs,
+		AllowUnknowns: true,
+	})
 	if err != nil {
 		return nil, p.checkNYI("CheckConfig", err)
 	}
 
-	rpcInputs, err := MarshalProperties(newInputs, p.marshalOptions("inputs"))
+	rpcInputs, err := MarshalProperties(resp.Properties, p.marshalOptions("inputs"))
 	if err != nil {
 		return nil, err
 	}
 
-	rpcFailures := make([]*pulumirpc.CheckFailure, len(failures))
-	for i, f := range failures {
+	rpcFailures := make([]*pulumirpc.CheckFailure, len(resp.Failures))
+	for i, f := range resp.Failures {
 		rpcFailures[i] = &pulumirpc.CheckFailure{Property: string(f.Property), Reason: f.Reason}
 	}
 
@@ -203,22 +259,32 @@ func (p *providerServer) CheckConfig(ctx context.Context,
 func (p *providerServer) DiffConfig(ctx context.Context, req *pulumirpc.DiffRequest) (*pulumirpc.DiffResponse, error) {
 	urn := resource.URN(req.GetUrn())
 
-	oldInputs, err := UnmarshalProperties(req.GetOldInputs(), p.unmarshalOptions("oldInputs"))
+	oldInputs, err := UnmarshalProperties(
+		req.GetOldInputs(), p.unmarshalOptions("oldInputs", false /* keepOutputValues */))
 	if err != nil {
 		return nil, err
 	}
 
-	oldOutputs, err := UnmarshalProperties(req.GetOlds(), p.unmarshalOptions("oldOutputs"))
+	oldOutputs, err := UnmarshalProperties(
+		req.GetOlds(), p.unmarshalOptions("oldOutputs", false /* keepOutputValues */))
 	if err != nil {
 		return nil, err
 	}
 
-	newInputs, err := UnmarshalProperties(req.GetNews(), p.unmarshalOptions("newInputs"))
+	newInputs, err := UnmarshalProperties(
+		req.GetNews(), p.unmarshalOptions("newInputs", false /* keepOutputValues */))
 	if err != nil {
 		return nil, err
 	}
 
-	diff, err := p.provider.DiffConfig(urn, oldInputs, oldOutputs, newInputs, true, req.GetIgnoreChanges())
+	diff, err := p.provider.DiffConfig(ctx, DiffConfigRequest{
+		URN:           urn,
+		OldInputs:     oldInputs,
+		OldOutputs:    oldOutputs,
+		NewInputs:     newInputs,
+		AllowUnknowns: true,
+		IgnoreChanges: req.GetIgnoreChanges(),
+	})
 	if err != nil {
 		return nil, p.checkNYI("DiffConfig", err)
 	}
@@ -230,7 +296,7 @@ func (p *providerServer) Configure(ctx context.Context,
 ) (*pulumirpc.ConfigureResponse, error) {
 	var inputs resource.PropertyMap
 	if req.GetArgs() != nil {
-		args, err := UnmarshalProperties(req.GetArgs(), p.unmarshalOptions("args"))
+		args, err := UnmarshalProperties(req.GetArgs(), p.unmarshalOptions("args", false /* keepOutputValues */))
 		if err != nil {
 			return nil, err
 		}
@@ -253,40 +319,48 @@ func (p *providerServer) Configure(ctx context.Context,
 		}
 	}
 
-	if err := p.provider.Configure(inputs); err != nil {
+	if _, err := p.provider.Configure(ctx, ConfigureRequest{inputs}); err != nil {
 		return nil, err
 	}
 
 	p.keepSecrets = req.GetAcceptSecrets()
 	p.keepResources = req.GetAcceptResources()
-	return &pulumirpc.ConfigureResponse{AcceptSecrets: true, SupportsPreview: true, AcceptResources: true}, nil
+	return &pulumirpc.ConfigureResponse{
+		AcceptSecrets: true, SupportsPreview: true, AcceptResources: true, AcceptOutputs: true,
+	}, nil
 }
 
 func (p *providerServer) Check(ctx context.Context, req *pulumirpc.CheckRequest) (*pulumirpc.CheckResponse, error) {
 	urn := resource.URN(req.GetUrn())
 
-	state, err := UnmarshalProperties(req.GetOlds(), p.unmarshalOptions("state"))
+	state, err := UnmarshalProperties(req.GetOlds(), p.unmarshalOptions("state", false /* keepOutputValues */))
 	if err != nil {
 		return nil, err
 	}
 
-	inputs, err := UnmarshalProperties(req.GetNews(), p.unmarshalOptions("inputs"))
+	inputs, err := UnmarshalProperties(req.GetNews(), p.unmarshalOptions("inputs", false /* keepOutputValues */))
 	if err != nil {
 		return nil, err
 	}
 
-	newInputs, failures, err := p.provider.Check(urn, state, inputs, true, req.RandomSeed)
+	resp, err := p.provider.Check(ctx, CheckRequest{
+		URN:           urn,
+		Olds:          state,
+		News:          inputs,
+		AllowUnknowns: true,
+		RandomSeed:    req.RandomSeed,
+	})
 	if err != nil {
 		return nil, err
 	}
 
-	rpcInputs, err := MarshalProperties(newInputs, p.marshalOptions("newInputs"))
+	rpcInputs, err := MarshalProperties(resp.Properties, p.marshalOptions("newInputs"))
 	if err != nil {
 		return nil, err
 	}
 
-	rpcFailures := make([]*pulumirpc.CheckFailure, len(failures))
-	for i, f := range failures {
+	rpcFailures := make([]*pulumirpc.CheckFailure, len(resp.Failures))
+	for i, f := range resp.Failures {
 		rpcFailures[i] = &pulumirpc.CheckFailure{Property: string(f.Property), Reason: f.Reason}
 	}
 
@@ -296,22 +370,33 @@ func (p *providerServer) Check(ctx context.Context, req *pulumirpc.CheckRequest)
 func (p *providerServer) Diff(ctx context.Context, req *pulumirpc.DiffRequest) (*pulumirpc.DiffResponse, error) {
 	urn, id := resource.URN(req.GetUrn()), resource.ID(req.GetId())
 
-	oldInputs, err := UnmarshalProperties(req.GetOldInputs(), p.unmarshalOptions("oldInputs"))
+	oldInputs, err := UnmarshalProperties(
+		req.GetOldInputs(), p.unmarshalOptions("oldInputs", false /* keepOutputValues */))
 	if err != nil {
 		return nil, err
 	}
 
-	oldOutputs, err := UnmarshalProperties(req.GetOlds(), p.unmarshalOptions("oldOutputs"))
+	oldOutputs, err := UnmarshalProperties(
+		req.GetOlds(), p.unmarshalOptions("oldOutputs", false /* keepOutputValues */))
 	if err != nil {
 		return nil, err
 	}
 
-	newInputs, err := UnmarshalProperties(req.GetNews(), p.unmarshalOptions("newInputs"))
+	newInputs, err := UnmarshalProperties(
+		req.GetNews(), p.unmarshalOptions("newInputs", false /* keepOutputValues */))
 	if err != nil {
 		return nil, err
 	}
 
-	diff, err := p.provider.Diff(urn, id, oldInputs, oldOutputs, newInputs, true, req.GetIgnoreChanges())
+	diff, err := p.provider.Diff(ctx, DiffRequest{
+		URN:           urn,
+		ID:            id,
+		OldInputs:     oldInputs,
+		OldOutputs:    oldOutputs,
+		NewInputs:     newInputs,
+		AllowUnknowns: true,
+		IgnoreChanges: req.GetIgnoreChanges(),
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -321,23 +406,28 @@ func (p *providerServer) Diff(ctx context.Context, req *pulumirpc.DiffRequest) (
 func (p *providerServer) Create(ctx context.Context, req *pulumirpc.CreateRequest) (*pulumirpc.CreateResponse, error) {
 	urn := resource.URN(req.GetUrn())
 
-	inputs, err := UnmarshalProperties(req.GetProperties(), p.unmarshalOptions("inputs"))
+	inputs, err := UnmarshalProperties(req.GetProperties(), p.unmarshalOptions("inputs", false /* keepOutputValues */))
 	if err != nil {
 		return nil, err
 	}
 
-	id, state, _, err := p.provider.Create(urn, inputs, req.GetTimeout(), req.GetPreview())
+	resp, err := p.provider.Create(ctx, CreateRequest{
+		URN:        urn,
+		Properties: inputs,
+		Timeout:    req.GetTimeout(),
+		Preview:    req.GetPreview(),
+	})
 	if err != nil {
 		return nil, err
 	}
 
-	rpcState, err := MarshalProperties(state, p.marshalOptions("newState"))
+	rpcState, err := MarshalProperties(resp.Properties, p.marshalOptions("newState"))
 	if err != nil {
 		return nil, err
 	}
 
 	return &pulumirpc.CreateResponse{
-		Id:         string(id),
+		Id:         string(resp.ID),
 		Properties: rpcState,
 	}, nil
 }
@@ -345,33 +435,38 @@ func (p *providerServer) Create(ctx context.Context, req *pulumirpc.CreateReques
 func (p *providerServer) Read(ctx context.Context, req *pulumirpc.ReadRequest) (*pulumirpc.ReadResponse, error) {
 	urn, requestID := resource.URN(req.GetUrn()), resource.ID(req.GetId())
 
-	state, err := UnmarshalProperties(req.GetProperties(), p.unmarshalOptions("state"))
+	state, err := UnmarshalProperties(req.GetProperties(), p.unmarshalOptions("state", false /* keepOutputValues */))
 	if err != nil {
 		return nil, err
 	}
 
-	inputs, err := UnmarshalProperties(req.GetInputs(), p.unmarshalOptions("inputs"))
+	inputs, err := UnmarshalProperties(req.GetInputs(), p.unmarshalOptions("inputs", false /* keepOutputValues */))
 	if err != nil {
 		return nil, err
 	}
 
-	result, _, err := p.provider.Read(urn, requestID, inputs, state)
+	resp, err := p.provider.Read(ctx, ReadRequest{
+		URN:    urn,
+		ID:     requestID,
+		Inputs: inputs,
+		State:  state,
+	})
 	if err != nil {
 		return nil, err
 	}
 
-	rpcState, err := MarshalProperties(result.Outputs, p.marshalOptions("newState"))
+	rpcState, err := MarshalProperties(resp.Outputs, p.marshalOptions("newState"))
 	if err != nil {
 		return nil, err
 	}
 
-	rpcInputs, err := MarshalProperties(result.Inputs, p.marshalOptions("newInputs"))
+	rpcInputs, err := MarshalProperties(resp.Inputs, p.marshalOptions("newInputs"))
 	if err != nil {
 		return nil, err
 	}
 
 	return &pulumirpc.ReadResponse{
-		Id:         string(result.ID),
+		Id:         string(resp.ID),
 		Properties: rpcState,
 		Inputs:     rpcInputs,
 	}, nil
@@ -380,29 +475,39 @@ func (p *providerServer) Read(ctx context.Context, req *pulumirpc.ReadRequest) (
 func (p *providerServer) Update(ctx context.Context, req *pulumirpc.UpdateRequest) (*pulumirpc.UpdateResponse, error) {
 	urn, id := resource.URN(req.GetUrn()), resource.ID(req.GetId())
 
-	oldOutputs, err := UnmarshalProperties(req.GetOlds(), p.unmarshalOptions("oldOutputs"))
+	oldOutputs, err := UnmarshalProperties(
+		req.GetOlds(), p.unmarshalOptions("oldOutputs", false /* keepOutputValues */))
 	if err != nil {
 		return nil, err
 	}
 
-	oldInputs, err := UnmarshalProperties(req.GetOldInputs(), p.unmarshalOptions("oldInputs"))
+	oldInputs, err := UnmarshalProperties(
+		req.GetOldInputs(), p.unmarshalOptions("oldInputs", false /* keepOutputValues */))
 	if err != nil {
 		return nil, err
 	}
 
-	newInputs, err := UnmarshalProperties(req.GetNews(), p.unmarshalOptions("newInputs"))
+	newInputs, err := UnmarshalProperties(
+		req.GetNews(), p.unmarshalOptions("newInputs", false /* keepOutputValues */))
 	if err != nil {
 		return nil, err
 	}
 
-	newState, _, err := p.provider.Update(
-		urn, id, oldOutputs, oldInputs, newInputs,
-		req.GetTimeout(), req.GetIgnoreChanges(), req.GetPreview())
+	resp, err := p.provider.Update(ctx, UpdateRequest{
+		URN:           urn,
+		ID:            id,
+		OldInputs:     oldInputs,
+		OldOutputs:    oldOutputs,
+		NewInputs:     newInputs,
+		Timeout:       req.GetTimeout(),
+		IgnoreChanges: req.GetIgnoreChanges(),
+		Preview:       req.GetPreview(),
+	})
 	if err != nil {
 		return nil, err
 	}
 
-	rpcState, err := MarshalProperties(newState, p.marshalOptions("newState"))
+	rpcState, err := MarshalProperties(resp.Properties, p.marshalOptions("newState"))
 	if err != nil {
 		return nil, err
 	}
@@ -413,17 +518,23 @@ func (p *providerServer) Update(ctx context.Context, req *pulumirpc.UpdateReques
 func (p *providerServer) Delete(ctx context.Context, req *pulumirpc.DeleteRequest) (*emptypb.Empty, error) {
 	urn, id := resource.URN(req.GetUrn()), resource.ID(req.GetId())
 
-	inputs, err := UnmarshalProperties(req.GetOldInputs(), p.unmarshalOptions("inputs"))
+	inputs, err := UnmarshalProperties(req.GetOldInputs(), p.unmarshalOptions("inputs", false /* keepOutputValues */))
 	if err != nil {
 		return nil, err
 	}
 
-	outputs, err := UnmarshalProperties(req.GetProperties(), p.unmarshalOptions("outputs"))
+	outputs, err := UnmarshalProperties(req.GetProperties(), p.unmarshalOptions("outputs", false /* keepOutputValues */))
 	if err != nil {
 		return nil, err
 	}
 
-	if _, err = p.provider.Delete(urn, id, inputs, outputs, req.GetTimeout()); err != nil {
+	if _, err = p.provider.Delete(ctx, DeleteRequest{
+		URN:     urn,
+		ID:      id,
+		Inputs:  inputs,
+		Outputs: outputs,
+		Timeout: req.GetTimeout(),
+	}); err != nil {
 		return nil, err
 	}
 
@@ -435,7 +546,7 @@ func (p *providerServer) Construct(ctx context.Context,
 ) (*pulumirpc.ConstructResponse, error) {
 	typ, name, parent := tokens.Type(req.GetType()), req.GetName(), resource.URN(req.GetParent())
 
-	inputs, err := UnmarshalProperties(req.GetInputs(), p.unmarshalOptions("inputs"))
+	inputs, err := UnmarshalProperties(req.GetInputs(), p.unmarshalOptions("inputs", true /* keepOutputValues */))
 	if err != nil {
 		return nil, err
 	}
@@ -492,18 +603,27 @@ func (p *providerServer) Construct(ctx context.Context,
 		PropertyDependencies: propertyDependencies,
 	}
 
-	result, err := p.provider.Construct(info, typ, name, parent, inputs, options)
+	resp, err := p.provider.Construct(ctx, ConstructRequest{
+		Info:    info,
+		Type:    typ,
+		Name:    name,
+		Parent:  parent,
+		Inputs:  inputs,
+		Options: options,
+	})
 	if err != nil {
 		return nil, err
 	}
 
-	outputs, err := MarshalProperties(result.Outputs, p.marshalOptions("outputs"))
+	opts := p.marshalOptions("outputs")
+	opts.KeepOutputValues = req.AcceptsOutputValues
+	outputs, err := MarshalProperties(resp.Outputs, opts)
 	if err != nil {
 		return nil, err
 	}
 
 	outputDependencies := map[string]*pulumirpc.ConstructResponse_PropertyDependencies{}
-	for name, deps := range result.OutputDependencies {
+	for name, deps := range resp.OutputDependencies {
 		urns := make([]string, len(deps))
 		for i, urn := range deps {
 			urns[i] = string(urn)
@@ -512,30 +632,33 @@ func (p *providerServer) Construct(ctx context.Context,
 	}
 
 	return &pulumirpc.ConstructResponse{
-		Urn:               string(result.URN),
+		Urn:               string(resp.URN),
 		State:             outputs,
 		StateDependencies: outputDependencies,
 	}, nil
 }
 
 func (p *providerServer) Invoke(ctx context.Context, req *pulumirpc.InvokeRequest) (*pulumirpc.InvokeResponse, error) {
-	args, err := UnmarshalProperties(req.GetArgs(), p.unmarshalOptions("args"))
+	args, err := UnmarshalProperties(req.GetArgs(), p.unmarshalOptions("args", false /* keepOutputValues */))
 	if err != nil {
 		return nil, err
 	}
 
-	result, failures, err := p.provider.Invoke(tokens.ModuleMember(req.GetTok()), args)
+	resp, err := p.provider.Invoke(ctx, InvokeRequest{
+		Tok:  tokens.ModuleMember(req.GetTok()),
+		Args: args,
+	})
 	if err != nil {
 		return nil, err
 	}
 
-	rpcResult, err := MarshalProperties(result, p.marshalOptions("result"))
+	rpcResult, err := MarshalProperties(resp.Properties, p.marshalOptions("result"))
 	if err != nil {
 		return nil, err
 	}
 
-	rpcFailures := make([]*pulumirpc.CheckFailure, len(failures))
-	for i, f := range failures {
+	rpcFailures := make([]*pulumirpc.CheckFailure, len(resp.Failures))
+	for i, f := range resp.Failures {
 		rpcFailures[i] = &pulumirpc.CheckFailure{Property: string(f.Property), Reason: f.Reason}
 	}
 
@@ -548,29 +671,32 @@ func (p *providerServer) Invoke(ctx context.Context, req *pulumirpc.InvokeReques
 func (p *providerServer) StreamInvoke(req *pulumirpc.InvokeRequest,
 	server pulumirpc.ResourceProvider_StreamInvokeServer,
 ) error {
-	args, err := UnmarshalProperties(req.GetArgs(), p.unmarshalOptions("args"))
+	args, err := UnmarshalProperties(req.GetArgs(), p.unmarshalOptions("args", false /* keepOutputValues */))
 	if err != nil {
 		return err
 	}
 
-	failures, err := p.provider.StreamInvoke(tokens.ModuleMember(req.GetTok()), args,
-		func(item resource.PropertyMap) error {
+	resp, err := p.provider.StreamInvoke(context.TODO(), StreamInvokeRequest{
+		Tok:  tokens.ModuleMember(req.GetTok()),
+		Args: args,
+		OnNext: func(item resource.PropertyMap) error {
 			rpcItem, err := MarshalProperties(item, p.marshalOptions("item"))
 			if err != nil {
 				return err
 			}
 
 			return server.Send(&pulumirpc.InvokeResponse{Return: rpcItem})
-		})
+		},
+	})
 	if err != nil {
 		return err
 	}
-	if len(failures) == 0 {
+	if len(resp.Failures) == 0 {
 		return nil
 	}
 
-	rpcFailures := make([]*pulumirpc.CheckFailure, len(failures))
-	for i, f := range failures {
+	rpcFailures := make([]*pulumirpc.CheckFailure, len(resp.Failures))
+	for i, f := range resp.Failures {
 		rpcFailures[i] = &pulumirpc.CheckFailure{Property: string(f.Property), Reason: f.Reason}
 	}
 
@@ -578,7 +704,7 @@ func (p *providerServer) StreamInvoke(req *pulumirpc.InvokeRequest,
 }
 
 func (p *providerServer) Call(ctx context.Context, req *pulumirpc.CallRequest) (*pulumirpc.CallResponse, error) {
-	args, err := UnmarshalProperties(req.GetArgs(), p.unmarshalOptions("args"))
+	args, err := UnmarshalProperties(req.GetArgs(), p.unmarshalOptions("args", true /* keepOutputValues */))
 	if err != nil {
 		return nil, err
 	}
@@ -611,17 +737,19 @@ func (p *providerServer) Call(ctx context.Context, req *pulumirpc.CallRequest) (
 		ArgDependencies: argDependencies,
 	}
 
-	result, err := p.provider.Call(tokens.ModuleMember(req.GetTok()), args, info, options)
+	result, err := p.provider.Call(ctx, CallRequest{
+		Tok:     tokens.ModuleMember(req.GetTok()),
+		Args:    args,
+		Info:    info,
+		Options: options,
+	})
 	if err != nil {
 		return nil, err
 	}
 
-	rpcResult, err := MarshalProperties(result.Return, MarshalOptions{
-		Label:         "result",
-		KeepUnknowns:  true,
-		KeepSecrets:   true,
-		KeepResources: true,
-	})
+	opts := p.marshalOptions("return")
+	opts.KeepOutputValues = req.AcceptsOutputValues
+	rpcResult, err := MarshalProperties(result.Return, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -650,19 +778,24 @@ func (p *providerServer) Call(ctx context.Context, req *pulumirpc.CallRequest) (
 func (p *providerServer) GetMapping(ctx context.Context,
 	req *pulumirpc.GetMappingRequest,
 ) (*pulumirpc.GetMappingResponse, error) {
-	data, provider, err := p.provider.GetMapping(req.Key, req.Provider)
+	resp, err := p.provider.GetMapping(ctx, GetMappingRequest{
+		Key:      req.Key,
+		Provider: req.Provider,
+	})
 	if err != nil {
 		return nil, err
 	}
-	return &pulumirpc.GetMappingResponse{Data: data, Provider: provider}, nil
+	return &pulumirpc.GetMappingResponse{Data: resp.Data, Provider: resp.Provider}, nil
 }
 
 func (p *providerServer) GetMappings(ctx context.Context,
 	req *pulumirpc.GetMappingsRequest,
 ) (*pulumirpc.GetMappingsResponse, error) {
-	providers, err := p.provider.GetMappings(req.Key)
+	providers, err := p.provider.GetMappings(ctx, GetMappingsRequest{
+		Key: req.Key,
+	})
 	if err != nil {
 		return nil, err
 	}
-	return &pulumirpc.GetMappingsResponse{Providers: providers}, nil
+	return &pulumirpc.GetMappingsResponse{Providers: providers.Keys}, nil
 }

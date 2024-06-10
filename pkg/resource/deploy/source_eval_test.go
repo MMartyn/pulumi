@@ -64,7 +64,7 @@ func fixedProgram(steps []RegisterResourceEvent) deploytest.ProgramFunc {
 	return func(_ plugin.RunInfo, resmon *deploytest.ResourceMonitor) error {
 		for _, s := range steps {
 			g := s.Goal()
-			urn, id, outs, err := resmon.RegisterResource(g.Type, g.Name, g.Custom, deploytest.ResourceOptions{
+			resp, err := resmon.RegisterResource(g.Type, g.Name, g.Custom, deploytest.ResourceOptions{
 				Parent:       g.Parent,
 				Protect:      g.Protect,
 				Dependencies: g.Dependencies,
@@ -76,8 +76,8 @@ func fixedProgram(steps []RegisterResourceEvent) deploytest.ProgramFunc {
 				return err
 			}
 			s.Done(&RegisterResult{
-				State: resource.NewState(g.Type, urn, g.Custom, false, id, g.Properties, outs, g.Parent, g.Protect,
-					false, g.Dependencies, nil, g.Provider, g.PropertyDependencies, false, nil, nil, nil,
+				State: resource.NewState(g.Type, resp.URN, g.Custom, false, resp.ID, g.Properties, resp.Outputs, g.Parent,
+					g.Protect, false, g.Dependencies, nil, g.Provider, g.PropertyDependencies, false, nil, nil, nil,
 					"", false, "", nil, nil, ""),
 			})
 		}
@@ -158,8 +158,11 @@ func TestRegisterNoDefaultProviders(t *testing.T) {
 	t.Parallel()
 
 	runInfo := &EvalRunInfo{
-		Proj:   &workspace.Project{Name: "test"},
-		Target: &Target{Name: tokens.MustParseStackName("test")},
+		ProjectRoot: "/",
+		Pwd:         "/",
+		Program:     ".",
+		Proj:        &workspace.Project{Name: "test"},
+		Target:      &Target{Name: tokens.MustParseStackName("test")},
 	}
 
 	newURN := func(t tokens.Type, name string, parent resource.URN) resource.URN {
@@ -257,8 +260,11 @@ func TestRegisterDefaultProviders(t *testing.T) {
 	t.Parallel()
 
 	runInfo := &EvalRunInfo{
-		Proj:   &workspace.Project{Name: "test"},
-		Target: &Target{Name: tokens.MustParseStackName("test")},
+		ProjectRoot: "/",
+		Pwd:         "/",
+		Program:     ".",
+		Proj:        &workspace.Project{Name: "test"},
+		Target:      &Target{Name: tokens.MustParseStackName("test")},
 	}
 
 	newURN := func(t tokens.Type, name string, parent resource.URN) resource.URN {
@@ -351,8 +357,11 @@ func TestReadInvokeNoDefaultProviders(t *testing.T) {
 	t.Parallel()
 
 	runInfo := &EvalRunInfo{
-		Proj:   &workspace.Project{Name: "test"},
-		Target: &Target{Name: tokens.MustParseStackName("test")},
+		ProjectRoot: "/",
+		Pwd:         "/",
+		Program:     ".",
+		Proj:        &workspace.Project{Name: "test"},
+		Target:      &Target{Name: tokens.MustParseStackName("test")},
 	}
 
 	newURN := func(t tokens.Type, name string, parent resource.URN) resource.URN {
@@ -443,8 +452,11 @@ func TestReadInvokeDefaultProviders(t *testing.T) {
 	t.Parallel()
 
 	runInfo := &EvalRunInfo{
-		Proj:   &workspace.Project{Name: "test"},
-		Target: &Target{Name: tokens.MustParseStackName("test")},
+		ProjectRoot: "/",
+		Pwd:         "/",
+		Program:     ".",
+		Proj:        &workspace.Project{Name: "test"},
+		Target:      &Target{Name: tokens.MustParseStackName("test")},
 	}
 
 	newURN := func(t tokens.Type, name string, parent resource.URN) resource.URN {
@@ -584,8 +596,11 @@ func TestDisableDefaultProviders(t *testing.T) {
 			t.Parallel()
 
 			runInfo := &EvalRunInfo{
-				Proj:   &workspace.Project{Name: "test"},
-				Target: &Target{Name: tokens.MustParseStackName("test")},
+				ProjectRoot: "/",
+				Pwd:         "/",
+				Program:     ".",
+				Proj:        &workspace.Project{Name: "test"},
+				Target:      &Target{Name: tokens.MustParseStackName("test")},
 			}
 			if tt.disableDefault {
 				disableDefaultProviders(runInfo, "pkgA")
@@ -727,8 +742,11 @@ func TestResouceMonitor_remoteComponentResourceOptions(t *testing.T) {
 	}
 
 	runInfo := &EvalRunInfo{
-		Proj:   &workspace.Project{Name: "test"},
-		Target: &Target{Name: tokens.MustParseStackName("test")},
+		ProjectRoot: "/",
+		Pwd:         "/",
+		Program:     ".",
+		Proj:        &workspace.Project{Name: "test"},
+		Target:      &Target{Name: tokens.MustParseStackName("test")},
 	}
 
 	newURN := func(t tokens.Type, name string, parent resource.URN) resource.URN {
@@ -856,7 +874,7 @@ func TestResouceMonitor_remoteComponentResourceOptions(t *testing.T) {
 			give := tt.give
 			give.Remote = true
 			program := func(_ plugin.RunInfo, resmon *deploytest.ResourceMonitor) error {
-				_, _, _, err := resmon.RegisterResource("pkgA:m:typA", "resA", false, give)
+				_, err := resmon.RegisterResource("pkgA:m:typA", "resA", false, give)
 				require.NoError(t, err, "register resource")
 				return nil
 			}
@@ -932,6 +950,9 @@ func TestResouceMonitor_remoteComponentResourceOptions(t *testing.T) {
 // for #2753.
 // func TestReadResourceAndInvokeVersion(t *testing.T) {
 // 	runInfo := &EvalRunInfo{
+//      ProjectRoot: "/",
+// 		Pwd:         "/",
+// 		Program:     ".",
 // 		Proj:   &workspace.Project{Name: "test"},
 // 		Target: &Target{Name: "test"},
 // 	}
@@ -1052,17 +1073,17 @@ func TestResouceMonitor_remoteComponentResourceOptions(t *testing.T) {
 // 	//  2. Provider pkgC, version 0.18.0
 // 	program := func(_ plugin.RunInfo, resmon *deploytest.ResourceMonitor) error {
 // 		// Triggers pkgA, v0.18.1.
-// 		_, _, _, err := resmon.RegisterResource("pkgA:m:typA", "resA", true, "", false, nil, "",
+// 		_, err := resmon.RegisterResource("pkgA:m:typA", "resA", true, "", false, nil, "",
 // 			resource.PropertyMap{}, nil, false, "0.18.1", nil)
 // 		assert.NoError(t, err)
 
 // 		// Re-uses pkgA's already-instantiated provider.
-// 		_, _, _, err = resmon.RegisterResource("pkgA:m:typA", "resB", true, "", false, nil, "",
+// 		_, err = resmon.RegisterResource("pkgA:m:typA", "resB", true, "", false, nil, "",
 // 			resource.PropertyMap{}, nil, false, "0.18.1", nil)
 // 		assert.NoError(t, err)
 
 // 		// Triggers pkgA, v0.18.2
-// 		_, _, _, err = resmon.RegisterResource("pkgA:m:typA", "resB", true, "", false, nil, "",
+// 		_, err = resmon.RegisterResource("pkgA:m:typA", "resB", true, "", false, nil, "",
 // 			resource.PropertyMap{}, nil, false, "0.18.2", nil)
 // 		assert.NoError(t, err)
 // 		return nil
@@ -1249,40 +1270,67 @@ func TestRequestFromNodeJS(t *testing.T) {
 
 func TestTransformAliasForNodeJSCompat(t *testing.T) {
 	t.Parallel()
+
+	sptr := func(s string) *string {
+		return &s
+	}
+
+	bptr := func(b bool) *bool {
+		return &b
+	}
+
+	makeAlias := func(parent *string, noParent *bool, name string) *pulumirpc.Alias {
+		spec := &pulumirpc.Alias_Spec{
+			Name: name,
+		}
+		if parent != nil {
+			spec.Parent = &pulumirpc.Alias_Spec_ParentUrn{ParentUrn: *parent}
+		}
+		if noParent != nil {
+			spec.Parent = &pulumirpc.Alias_Spec_NoParent{NoParent: *noParent}
+		}
+
+		return &pulumirpc.Alias{
+			Alias: &pulumirpc.Alias_Spec_{
+				Spec: spec,
+			},
+		}
+	}
+
 	tests := []struct {
 		name     string
-		input    resource.Alias
-		expected resource.Alias
+		input    *pulumirpc.Alias
+		expected *pulumirpc.Alias
 	}{
 		{
 			name:     `{Parent: "", NoParent: true} (transformed)`,
-			input:    resource.Alias{Parent: "", NoParent: true},
-			expected: resource.Alias{Parent: "", NoParent: false},
+			input:    makeAlias(nil, bptr(true), ""),
+			expected: makeAlias(nil, nil, ""),
 		},
 		{
 			name:     `{Parent: "", NoParent: false} (transformed)`,
-			input:    resource.Alias{Parent: "", NoParent: false},
-			expected: resource.Alias{Parent: "", NoParent: true},
+			input:    makeAlias(sptr(""), nil, ""),
+			expected: makeAlias(nil, bptr(true), ""),
 		},
 		{
 			name:     `{Parent: "", NoParent: false, Name: "name"} (transformed)`,
-			input:    resource.Alias{Parent: "", NoParent: false, Name: "name"},
-			expected: resource.Alias{Parent: "", NoParent: true, Name: "name"},
+			input:    makeAlias(sptr(""), nil, "name"),
+			expected: makeAlias(nil, bptr(true), "name"),
 		},
 		{
 			name:     `{Parent: "", NoParent: true, Name: "name"} (transformed)`,
-			input:    resource.Alias{Parent: "", NoParent: true, Name: "name"},
-			expected: resource.Alias{Parent: "", NoParent: false, Name: "name"},
+			input:    makeAlias(nil, bptr(true), "name"),
+			expected: makeAlias(nil, nil, "name"),
 		},
 		{
 			name:     `{Parent: "foo", NoParent: false} (no transform)`,
-			input:    resource.Alias{Parent: "foo", NoParent: false},
-			expected: resource.Alias{Parent: "foo", NoParent: false},
+			input:    makeAlias(sptr("foo"), nil, ""),
+			expected: makeAlias(sptr("foo"), nil, ""),
 		},
 		{
 			name:     `{Parent: "foo", NoParent: false, Name: "name"} (no transform)`,
-			input:    resource.Alias{Parent: "foo", NoParent: false, Name: "name"},
-			expected: resource.Alias{Parent: "foo", NoParent: false, Name: "name"},
+			input:    makeAlias(sptr("foo"), nil, "name"),
+			expected: makeAlias(sptr("foo"), nil, "name"),
 		},
 	}
 	for _, tt := range tests {
@@ -1354,8 +1402,13 @@ func TestStreamInvoke(t *testing.T) {
 
 		mon, err := newResourceMonitor(&evalSource{
 			runinfo: &EvalRunInfo{
-				Proj:   &workspace.Project{Name: "proj"},
-				Target: &Target{},
+				ProjectRoot: "/",
+				Pwd:         "/",
+				Program:     ".",
+				Proj:        &workspace.Project{Name: "proj"},
+				Target: &Target{
+					Name: tokens.MustParseStackName("stack"),
+				},
 			},
 			plugctx: plugctx,
 		}, &providerSourceMock{
@@ -1411,8 +1464,13 @@ func TestStreamInvoke(t *testing.T) {
 
 		mon, err := newResourceMonitor(&evalSource{
 			runinfo: &EvalRunInfo{
-				Proj:   &workspace.Project{Name: "proj"},
-				Target: &Target{},
+				ProjectRoot: "/",
+				Pwd:         "/",
+				Program:     ".",
+				Proj:        &workspace.Project{Name: "proj"},
+				Target: &Target{
+					Name: tokens.MustParseStackName("stack"),
+				},
 			},
 			plugctx: plugctx,
 		}, &providerSourceMock{
@@ -1467,8 +1525,13 @@ func TestStreamInvoke(t *testing.T) {
 
 		mon, err := newResourceMonitor(&evalSource{
 			runinfo: &EvalRunInfo{
-				Proj:   &workspace.Project{Name: "proj"},
-				Target: &Target{},
+				ProjectRoot: "/",
+				Pwd:         "/",
+				Program:     ".",
+				Proj:        &workspace.Project{Name: "proj"},
+				Target: &Target{
+					Name: tokens.MustParseStackName("stack"),
+				},
 			},
 			plugctx: plugctx,
 		}, &providerSourceMock{
@@ -1539,8 +1602,13 @@ func TestStreamInvoke(t *testing.T) {
 		providerRegChan := make(chan *registerResourceEvent, 100)
 		mon, err := newResourceMonitor(&evalSource{
 			runinfo: &EvalRunInfo{
-				Proj:   &workspace.Project{Name: "proj"},
-				Target: &Target{},
+				ProjectRoot: "/",
+				Pwd:         "/",
+				Program:     ".",
+				Proj:        &workspace.Project{Name: "proj"},
+				Target: &Target{
+					Name: tokens.MustParseStackName("stack"),
+				},
 			},
 			plugctx: plugctx,
 		}, reg, providerRegChan, nil, nil, Options{}, nil, nil, opentracing.SpanFromContext(context.Background()))
@@ -1617,7 +1685,10 @@ func TestStreamInvokeQuery(t *testing.T) {
 
 		mon, err := newQueryResourceMonitor(builtins, nil, nil, reg, plugctx,
 			providerRegErrChan, opentracing.SpanFromContext(cancel), &EvalRunInfo{
-				Proj: &workspace.Project{Name: "test"},
+				ProjectRoot: "/",
+				Pwd:         "/",
+				Program:     ".",
+				Proj:        &workspace.Project{Name: "test"},
 			})
 		require.NoError(t, err)
 
@@ -1675,7 +1746,10 @@ func TestStreamInvokeQuery(t *testing.T) {
 		providerRegErrChan := make(chan error)
 		mon, err := newQueryResourceMonitor(builtins, nil, nil, reg, plugctx,
 			providerRegErrChan, opentracing.SpanFromContext(cancel), &EvalRunInfo{
-				Proj: &workspace.Project{Name: "test"},
+				ProjectRoot: "/",
+				Pwd:         "/",
+				Program:     ".",
+				Proj:        &workspace.Project{Name: "test"},
 			})
 		require.NoError(t, err)
 
@@ -1750,7 +1824,10 @@ func TestEvalSource(t *testing.T) {
 				},
 
 				runinfo: &EvalRunInfo{
-					Proj: &workspace.Project{Name: "proj"},
+					ProjectRoot: "/",
+					Pwd:         "/",
+					Program:     ".",
+					Proj:        &workspace.Project{Name: "proj"},
 					Target: &Target{
 						Name: tokens.MustParseStackName("target-name"),
 						Config: config.Map{
@@ -1779,6 +1856,9 @@ func TestEvalSource(t *testing.T) {
 					Diag: &deploytest.NoopSink{},
 				},
 				runinfo: &EvalRunInfo{
+					ProjectRoot: "/",
+					Pwd:         "/",
+					Program:     ".",
 					Target: &Target{
 						Config: config.Map{
 							config.MustMakeKey("test", "secret"): config.NewSecureValue("secret"),
@@ -1818,7 +1898,8 @@ func TestResmonCancel(t *testing.T) {
 		done <- err
 	}()
 
-	assert.Equal(t, err, rm.Cancel())
+	// Cancel always returns nil or a joinErrors.
+	assert.Equal(t, errors.Join(err), rm.Cancel())
 }
 
 func TestSourceEvalServeOptions(t *testing.T) {
@@ -1961,6 +2042,32 @@ func (c *configSourceMock) GetPackageConfig(pkg tokens.Package) (resource.Proper
 
 func TestDefaultProviders(t *testing.T) {
 	t.Parallel()
+	t.Run("normalizeProviderRequest", func(t *testing.T) {
+		t.Parallel()
+		t.Run("use defaultProvider", func(t *testing.T) {
+			t.Parallel()
+			v1 := semver.MustParse("0.1.0")
+			d := &defaultProviders{
+				defaultProviderInfo: map[tokens.Package]workspace.PluginSpec{
+					tokens.Package("pkg"): {
+						Version:           &v1,
+						PluginDownloadURL: "github://owner/repo",
+						Checksums:         map[string][]byte{"key": []byte("expected-checksum-value")},
+					},
+				},
+				config: &configSourceMock{
+					GetPackageConfigF: func(pkg tokens.Package) (resource.PropertyMap, error) {
+						return resource.PropertyMap{}, nil
+					},
+				},
+			}
+			req := d.normalizeProviderRequest(providers.NewProviderRequest(nil, tokens.Package("pkg"), "", nil, nil))
+			assert.NotNil(t, req)
+			assert.Equal(t, &v1, req.Version())
+			assert.Equal(t, "github://owner/repo", req.PluginDownloadURL())
+			assert.Equal(t, map[string][]byte{"key": []byte("expected-checksum-value")}, req.PluginChecksums())
+		})
+	})
 	t.Run("newRegisterDefaultProviderEvent", func(t *testing.T) {
 		t.Parallel()
 		t.Run("error in GetPackageConfig()", func(t *testing.T) {
@@ -1975,33 +2082,6 @@ func TestDefaultProviders(t *testing.T) {
 			}
 			_, _, err := d.newRegisterDefaultProviderEvent(providers.ProviderRequest{})
 			assert.ErrorIs(t, err, expectedErr)
-		})
-		t.Run("use defaultProvider checksums", func(t *testing.T) {
-			t.Parallel()
-			d := &defaultProviders{
-				defaultProviderInfo: map[tokens.Package]workspace.PluginSpec{
-					tokens.Package(""): {
-						Checksums: map[string][]byte{"key": []byte("expected-checksum-value")},
-					},
-				},
-				config: &configSourceMock{
-					GetPackageConfigF: func(pkg tokens.Package) (resource.PropertyMap, error) {
-						return resource.PropertyMap{}, nil
-					},
-				},
-			}
-			evt, done, err := d.newRegisterDefaultProviderEvent(providers.ProviderRequest{})
-			assert.NoError(t, err)
-			assert.NotNil(t, done)
-			assert.Equal(t,
-				resource.PropertyValue{
-					V: resource.PropertyMap{
-						"key": resource.PropertyValue{
-							V: "65787065637465642d636865636b73756d2d76616c7565",
-						},
-					},
-				},
-				evt.goal.Properties["pluginChecksums"])
 		})
 	})
 	t.Run("handleRequest", func(t *testing.T) {
@@ -2212,7 +2292,7 @@ func TestParseProviderRequest(t *testing.T) {
 	t.Parallel()
 	t.Run("bad version", func(t *testing.T) {
 		t.Parallel()
-		_, err := parseProviderRequest("", "bad-version", "", nil)
+		_, err := parseProviderRequest("", "bad-version", "", nil, nil)
 		assert.ErrorContains(t, err, "No Major.Minor.Patch elements found")
 	})
 }
@@ -2243,8 +2323,13 @@ func TestInvoke(t *testing.T) {
 
 		mon, err := newResourceMonitor(&evalSource{
 			runinfo: &EvalRunInfo{
-				Proj:   &workspace.Project{Name: "proj"},
-				Target: &Target{},
+				ProjectRoot: "/",
+				Pwd:         "/",
+				Program:     ".",
+				Proj:        &workspace.Project{Name: "proj"},
+				Target: &Target{
+					Name: tokens.MustParseStackName("stack"),
+				},
 			},
 			plugctx: plugctx,
 		}, &providerSourceMock{
@@ -2296,8 +2381,13 @@ func TestInvoke(t *testing.T) {
 
 		mon, err := newResourceMonitor(&evalSource{
 			runinfo: &EvalRunInfo{
-				Proj:   &workspace.Project{Name: "proj"},
-				Target: &Target{},
+				ProjectRoot: "/",
+				Pwd:         "/",
+				Program:     ".",
+				Proj:        &workspace.Project{Name: "proj"},
+				Target: &Target{
+					Name: tokens.MustParseStackName("stack"),
+				},
 			},
 			plugctx: plugctx,
 		}, &providerSourceMock{
@@ -2349,7 +2439,7 @@ func TestCall(t *testing.T) {
 	t.Run("bad version", func(t *testing.T) {
 		t.Parallel()
 		rm := &resmon{}
-		_, err := rm.Call(context.Background(), &pulumirpc.CallRequest{
+		_, err := rm.Call(context.Background(), &pulumirpc.ResourceCallRequest{
 			Tok:     "pkgA:index:func",
 			Version: "bad-version",
 		})
@@ -2370,8 +2460,13 @@ func TestCall(t *testing.T) {
 
 		mon, err := newResourceMonitor(&evalSource{
 			runinfo: &EvalRunInfo{
-				Proj:   &workspace.Project{Name: "proj"},
-				Target: &Target{},
+				ProjectRoot: "/",
+				Pwd:         "/",
+				Program:     ".",
+				Proj:        &workspace.Project{Name: "proj"},
+				Target: &Target{
+					Name: tokens.MustParseStackName("stack"),
+				},
 			},
 			plugctx: plugctx,
 		}, &providerSourceMock{
@@ -2402,7 +2497,7 @@ func TestCall(t *testing.T) {
 			wg.Done()
 		}()
 
-		_, err = mon.Call(context.Background(), &pulumirpc.CallRequest{
+		_, err = mon.Call(context.Background(), &pulumirpc.ResourceCallRequest{
 			Tok:     "pkgA:index:func",
 			Version: "1.0.0",
 		})
@@ -2440,8 +2535,13 @@ func TestCall(t *testing.T) {
 
 		mon, err := newResourceMonitor(&evalSource{
 			runinfo: &EvalRunInfo{
-				Proj:   &workspace.Project{Name: "proj"},
-				Target: &Target{},
+				ProjectRoot: "/",
+				Pwd:         "/",
+				Program:     ".",
+				Proj:        &workspace.Project{Name: "proj"},
+				Target: &Target{
+					Name: tokens.MustParseStackName("stack"),
+				},
 			},
 			plugctx: plugctx,
 		}, &providerSourceMock{
@@ -2456,15 +2556,14 @@ func TestCall(t *testing.T) {
 							"test": resource.NewStringProperty("test-value"),
 						},
 						args)
-					assert.Equal(t,
-						map[resource.PropertyKey][]resource.URN{
-							"test": {
-								"urn:pulumi:stack::project::type::dep1",
-								"urn:pulumi:stack::project::type::dep2",
-								"urn:pulumi:stack::project::type::dep3",
-							},
+					require.Equal(t, 1, len(options.ArgDependencies))
+					assert.ElementsMatch(t,
+						[]resource.URN{
+							"urn:pulumi:stack::project::type::dep1",
+							"urn:pulumi:stack::project::type::dep2",
+							"urn:pulumi:stack::project::type::dep3",
 						},
-						options.ArgDependencies)
+						options.ArgDependencies["test"])
 					called = true
 					return plugin.CallResult{}, expectedErr
 				},
@@ -2477,11 +2576,11 @@ func TestCall(t *testing.T) {
 		}, plugin.MarshalOptions{})
 		require.NoError(t, err)
 
-		_, err = mon.Call(context.Background(), &pulumirpc.CallRequest{
+		_, err = mon.Call(context.Background(), &pulumirpc.ResourceCallRequest{
 			Tok:     "pkgA:index:func",
 			Version: "1.0.0",
 			Args:    args,
-			ArgDependencies: map[string]*pulumirpc.CallRequest_ArgumentDependencies{
+			ArgDependencies: map[string]*pulumirpc.ResourceCallRequest_ArgumentDependencies{
 				"test": {
 					Urns: []string{
 						"urn:pulumi:stack::project::type::dep1",
@@ -2522,8 +2621,13 @@ func TestCall(t *testing.T) {
 
 		mon, err := newResourceMonitor(&evalSource{
 			runinfo: &EvalRunInfo{
-				Proj:   &workspace.Project{Name: "proj"},
-				Target: &Target{},
+				ProjectRoot: "/",
+				Pwd:         "/",
+				Program:     ".",
+				Proj:        &workspace.Project{Name: "proj"},
+				Target: &Target{
+					Name: tokens.MustParseStackName("stack"),
+				},
 			},
 			plugctx: plugctx,
 		}, &providerSourceMock{
@@ -2545,11 +2649,11 @@ func TestCall(t *testing.T) {
 		}, plugin.MarshalOptions{})
 		require.NoError(t, err)
 
-		_, err = mon.Call(context.Background(), &pulumirpc.CallRequest{
+		_, err = mon.Call(context.Background(), &pulumirpc.ResourceCallRequest{
 			Tok:     "pkgA:index:func",
 			Version: "1.0.0",
 			Args:    args,
-			ArgDependencies: map[string]*pulumirpc.CallRequest_ArgumentDependencies{
+			ArgDependencies: map[string]*pulumirpc.ResourceCallRequest_ArgumentDependencies{
 				"test": {
 					Urns: []string{
 						"invalid urn",
@@ -2586,8 +2690,13 @@ func TestCall(t *testing.T) {
 
 		mon, err := newResourceMonitor(&evalSource{
 			runinfo: &EvalRunInfo{
-				Proj:   &workspace.Project{Name: "proj"},
-				Target: &Target{},
+				ProjectRoot: "/",
+				Pwd:         "/",
+				Program:     ".",
+				Proj:        &workspace.Project{Name: "proj"},
+				Target: &Target{
+					Name: tokens.MustParseStackName("stack"),
+				},
 			},
 			plugctx: plugctx,
 		}, &providerSourceMock{
@@ -2625,7 +2734,7 @@ func TestCall(t *testing.T) {
 		}, plugin.MarshalOptions{})
 		require.NoError(t, err)
 
-		res, err := mon.Call(context.Background(), &pulumirpc.CallRequest{
+		res, err := mon.Call(context.Background(), &pulumirpc.ResourceCallRequest{
 			Tok:     "pkgA:index:func",
 			Version: "1.0.0",
 			Args:    args,
@@ -2859,69 +2968,6 @@ func TestRegisterResource(t *testing.T) {
 			assert.ErrorContains(t, err, "resource monitor shut down while waiting on step's done channel")
 		})
 	})
-	t.Run("parent is component provider", func(t *testing.T) {
-		t.Parallel()
-		t.Run("resource has no provider", func(t *testing.T) {
-			t.Parallel()
-			regChan := make(chan *registerResourceEvent, 1)
-			go func() {
-				evt := <-regChan
-				evt.done <- &RegisterResult{
-					State: &resource.State{},
-				}
-			}()
-			rm := &resmon{
-				regChan: regChan,
-				componentProviders: map[resource.URN]map[string]string{
-					"urn:pulumi:stack::project::type::foo": {
-						"urn:pulumi:stack::project::type::prov1": "",
-						"urn:pulumi:stack::project::type::prov2": "",
-					},
-				},
-			}
-			req := &pulumirpc.RegisterResourceRequest{
-				Parent: "urn:pulumi:stack::project::type::foo",
-			}
-			require.Nil(t, req.Providers)
-			_, err := rm.RegisterResource(context.Background(), req)
-			assert.NoError(t, err)
-			// Check request Providers mutated.
-			assert.NotNil(t, req.Providers)
-		})
-		t.Run("resource has a provider", func(t *testing.T) {
-			t.Parallel()
-			regChan := make(chan *registerResourceEvent, 1)
-			go func() {
-				evt := <-regChan
-				evt.done <- &RegisterResult{
-					State: &resource.State{},
-				}
-			}()
-			rm := &resmon{
-				regChan: regChan,
-				componentProviders: map[resource.URN]map[string]string{
-					"urn:pulumi:stack::project::type::foo": {
-						"urn:pulumi:stack::project::type::prov1": "",
-						"urn:pulumi:stack::project::type::prov2": "expected-value",
-					},
-				},
-			}
-			req := &pulumirpc.RegisterResourceRequest{
-				Provider: "urn:pulumi:stack::project::type::bar",
-				Parent:   "urn:pulumi:stack::project::type::foo",
-			}
-			require.Nil(t, req.Providers)
-			_, err := rm.RegisterResource(context.Background(), req)
-			assert.NoError(t, err)
-			// Check request Providers mutated.
-			assert.Equal(t,
-				map[string]string{
-					"urn:pulumi:stack::project::type::prov1": "",
-					"urn:pulumi:stack::project::type::prov2": "expected-value",
-				},
-				req.Providers)
-		})
-	})
 	t.Run("remote handles improper version", func(t *testing.T) {
 		t.Parallel()
 		regChan := make(chan *registerResourceEvent, 1)
@@ -3039,7 +3085,7 @@ func TestRegisterResource(t *testing.T) {
 				Type:    "pulumi:providers:some-type",
 				Remote:  true,
 				Providers: map[string]string{
-					"name": "invalid-provider-reference",
+					"name": "not-an-urn::id",
 				},
 			}
 			_, err := rm.RegisterResource(context.Background(), req)
@@ -3284,4 +3330,93 @@ func TestRegisterResource(t *testing.T) {
 			})
 		})
 	})
+}
+
+func TestDowngradeOutputValues(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name     string
+		input    resource.PropertyMap
+		expected resource.PropertyMap
+	}{
+		{
+			"plain",
+			resource.PropertyMap{
+				"foo": resource.NewStringProperty("hello"),
+				"bar": resource.NewNumberProperty(42),
+			},
+			resource.PropertyMap{
+				"foo": resource.NewStringProperty("hello"),
+				"bar": resource.NewNumberProperty(42),
+			},
+		},
+		{
+			"secret",
+			resource.PropertyMap{
+				"foo": resource.MakeSecret(resource.NewStringProperty("hello")),
+			},
+			resource.PropertyMap{
+				"foo": resource.MakeSecret(resource.NewStringProperty("hello")),
+			},
+		},
+		{
+			"output",
+			resource.PropertyMap{
+				"foo": resource.NewOutputProperty(resource.Output{
+					Element: resource.NewStringProperty("hello"),
+					Known:   true,
+				}),
+			},
+			resource.PropertyMap{
+				"foo": resource.NewStringProperty("hello"),
+			},
+		},
+		{
+			"secret output",
+			resource.PropertyMap{
+				"foo": resource.NewOutputProperty(resource.Output{
+					Element: resource.NewStringProperty("hello"),
+					Known:   true,
+					Secret:  true,
+				}),
+			},
+			resource.PropertyMap{
+				"foo": resource.MakeSecret(resource.NewStringProperty("hello")),
+			},
+		},
+		{
+			"unknown output",
+			resource.PropertyMap{
+				"foo": resource.NewOutputProperty(resource.Output{}),
+			},
+			resource.PropertyMap{
+				"foo": resource.MakeComputed(resource.NewStringProperty("")),
+			},
+		},
+		{
+			"unknown resource reference",
+			resource.PropertyMap{
+				"foo": resource.NewResourceReferenceProperty(resource.ResourceReference{
+					URN: "urn:pulumi:stack::project::package:module:resource::name",
+					ID:  resource.NewOutputProperty(resource.Output{}),
+				}),
+			},
+			resource.PropertyMap{
+				"foo": resource.NewResourceReferenceProperty(resource.ResourceReference{
+					URN: "urn:pulumi:stack::project::package:module:resource::name",
+					ID:  resource.MakeComputed(resource.NewStringProperty("")),
+				}),
+			},
+		},
+	}
+
+	for _, tt := range cases {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			actual := downgradeOutputValues(tt.input)
+			assert.Equal(t, tt.expected, actual)
+		})
+	}
 }

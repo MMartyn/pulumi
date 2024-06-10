@@ -378,27 +378,25 @@ async function applyHelperAsync<T, U>(
     func: (t: T) => Input<U>,
     runWithUnknowns: boolean,
 ) {
-    if (settings.isDryRun()) {
-        // During previews only perform the apply if the engine was able to give us an actual value
-        // for this Output.
-        const applyDuringPreview = isKnown || runWithUnknowns;
+    // Only perform the apply if the engine was able to give us an actual value
+    // for this Output.
+    const doApply = isKnown || runWithUnknowns;
 
-        if (!applyDuringPreview) {
-            // We didn't actually run the function, our new Output is definitely **not** known.
-            return {
-                allResources,
-                value: <U>(<any>undefined),
-                isKnown: false,
-                isSecret,
-            };
-        }
+    if (!doApply) {
+        // We didn't actually run the function, our new Output is definitely **not** known.
+        return {
+            allResources,
+            value: <U>(<any>undefined),
+            isKnown: false,
+            isSecret,
+        };
+    }
 
-        // If we are running with unknown values and the value is explicitly unknown but does not actually
-        // contain any unknown values, collapse its value to the unknown value. This ensures that callbacks
-        // that expect to see unknowns during preview in outputs that are not known will always do so.
-        if (!isKnown && runWithUnknowns && !containsUnknowns(value)) {
-            value = <T>(<any>unknown);
-        }
+    // If we are running with unknown values and the value is explicitly unknown but does not actually
+    // contain any unknown values, collapse its value to the unknown value. This ensures that callbacks
+    // that expect to see unknowns during preview in outputs that are not known will always do so.
+    if (!isKnown && runWithUnknowns && !containsUnknowns(value)) {
+        value = <T>(<any>unknown);
     }
 
     const transformed = await func(value);
@@ -408,29 +406,35 @@ async function applyHelperAsync<T, U>(
     return liftInnerOutput(allResources, transformed, /*isKnown*/ true, isSecret);
 }
 
-// Returns an promise denoting if the output is a secret or not. This is not the same as just calling `.isSecret`
-// because in cases where the output does not have a `isSecret` property and it is a Proxy, we need to ignore
-// the isSecret member that the proxy reports back.
-// This calls the public implementation so that we only make any calculations in a single place.
-/** @internal */
+/**
+ * Returns a promise denoting if the output is a secret or not. This is not the same as just calling `.isSecret`
+ * because in cases where the output does not have a `isSecret` property and it is a Proxy, we need to ignore
+ * the isSecret member that the proxy reports back.
+ *
+ * This calls the public implementation so that we only make any calculations in a single place.
+ *
+ * @internal
+ */
 export function isSecretOutput<T>(o: Output<T>): Promise<boolean> {
     return isSecret(o);
 }
 
-// Helper function for `output`.  This function trivially recurses through an object, copying it,
-// while also lifting any inner Outputs (with all their respective state) to a top-level Output at
-// the end.  If there are no inner outputs, this will not affect the data (except by producing a new
-// copy of it).
-//
-// Importantly:
-//
-//  1. Resources encountered while recursing are not touched.  This helps ensure they stay Resources
-//     (with an appropriate prototype chain).
-//  2. Primitive values (string, number, etc.) are returned as is.
-//  3. Arrays and Record are recursed into.  An Array<...> that contains any Outputs wil become an
-//     Output<Array<Unwrapped>>.  A Record<string, ...> that contains any Output values will be an
-//     Output<Record<string, Unwrap<...>>.  In both cases of recursion, the outer Output's
-//     known/secret/resources will be computed from the nested Outputs.
+/**
+ * Helper function for `output`.  This function trivially recurses through an object, copying it,
+ * while also lifting any inner Outputs (with all their respective state) to a top-level Output at
+ * the end.  If there are no inner outputs, this will not affect the data (except by producing a new
+ * copy of it).
+ *
+ * Importantly:
+ *
+ *  1. Resources encountered while recursing are not touched.  This helps ensure they stay Resources
+ *     (with an appropriate prototype chain).
+ *  2. Primitive values (string, number, etc.) are returned as is.
+ *  3. Arrays and Record are recursed into.  An Array<...> that contains any Outputs wil become an
+ *     Output<Array<Unwrapped>>.  A Record<string, ...> that contains any Output values will be an
+ *     Output<Record<string, Unwrap<...>>.  In both cases of recursion, the outer Output's
+ *     known/secret/resources will be computed from the nested Outputs.
+ */
 function outputRec(val: any): any {
     if (val === null || typeof val !== "object") {
         // strings, numbers, booleans, functions, symbols, undefineds, nulls are all returned as
@@ -579,6 +583,9 @@ export function unsecret<T>(val: Output<T>): Output<T> {
     );
 }
 
+/**
+ * [isSecret] returns `true` if and only if the provided [Output] is a secret.
+ */
 export function isSecret<T>(val: Output<T>): Promise<boolean> {
     return Output.isInstance(val.isSecret) ? Promise.resolve(false) : val.isSecret;
 }
@@ -871,8 +878,8 @@ export interface OutputInstance<T> {
      * If you need have multiple Outputs and a single Output is needed that combines both
      * set of resources, then 'pulumi.all' should be used instead.
      *
-     * This function will only be called execution of a 'pulumi up' request.  It will not run
-     * during 'pulumi preview' (as the values of resources are of course not known then). It is not
+     * This function will be called execution of a 'pulumi up' or 'pulumi preview' request, but it
+     * will ont run when the values of the output are unknown. It is not
      * available for functions that end up executing in the cloud during runtime.  To get the value
      * of the Output during cloud runtime execution, use `get()`.
      */
